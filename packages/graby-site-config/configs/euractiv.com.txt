@@ -1,0 +1,12 @@
+# both headers needed by wallabag, to prevent 403 error
+http_header(User-Agent): Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0
+http_header(cookie): pll_language=en
+
+body: //main[@id='main-content']//article[contains(@class, 'c-news-detail')]/div
+author: //a[@rel='author']
+date: substring-before(substring-after(//script[@type="application/ld+json"], '"datePublished":"'), '","dateModified"')
+title: substring-before(//meta[@property='og:title']/@content , ' | Euractiv')
+
+strip_id_or_class: ea-own-embed
+
+test_url: https://www.euractiv.com/section/economy-jobs/video/unlocking-the-benefits-of-diversity-in-the-workplace/

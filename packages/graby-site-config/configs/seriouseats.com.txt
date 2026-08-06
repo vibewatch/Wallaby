@@ -1,0 +1,19 @@
+http_header(User-Agent): Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0
+
+body: //main[@id='main']/article/div[contains(@class, 'article-content')] | //p[@class='heading__subtitle']
+date: substring-before( substring-after( //script[@id="schema-lifestyle_1-0"] , '"dateModified": "') , '"')
+author: //meta[@name="sailthru.author"]/@content
+
+strip: //button
+
+strip_id_or_class: social-share-wrapper
+strip_id_or_class: tag-nav-content
+
+# [FTR] activate images
+find_string: data-hi-res-src="https
+replace_string: src="https
+
+prune: no
+tidy: no
+
+test_url: http://www.seriouseats.com/recipes/2010/09/peking-duck-mandarin-pancakes-plum-sauce-recipe.html

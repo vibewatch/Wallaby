@@ -1,0 +1,9 @@
+body: //article
+body: //div[contains(concat(' ',normalize-space(@class),' '),' prose ')]
+
+strip: //header
+
+prune: no
+tidy: no
+
+test_url: https://www.linkedin.com/pulse/20140328055547-78273192-how-to-become-seo-expert

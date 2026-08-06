@@ -1,0 +1,31 @@
+# krautreporter.de
+#
+# Old config targeted removed .article-content and disabled imgs via
+# replace_string(<img src=): <img notused=. og:image is a cropped social variant;
+# ignore it so wallabag uses the hero image from the article header.
+
+http_header(user-agent): Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36
+
+find_string: property="og:image"
+replace_string: property="og:image-ignored"
+
+title: //meta[@property="og:title"]/@content
+title: //h1[contains(@class,'article-headers-standard__title')]
+
+body: //article[contains(@class,'article-article__main')]
+
+strip: //section[contains(@class,'article-share-url')]
+strip: //div[contains(@class,'article-tabbed-content__tab-row')]
+strip: //section[contains(@class,'article-headers-shared-metrics')]
+strip: //section[contains(@class,'article-tabbed-content__author')]
+strip: //article[contains(@class,'article-tabbed-content__listening-content')]
+strip: //article[contains(@class,'article-audio-player-component')]
+strip: //nav[contains(@class,'article-table-of-contents')]
+strip: //svg
+strip: //button
+
+autodetect_on_failure: no
+prune: no
+tidy: no
+
+test_url: https://krautreporter.de/politik-und-macht/6268-7-schritte-wie-du-die-perfekte-verschworungserzahlung-erfindest

@@ -1,0 +1,455 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  username      String    @unique
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+  role          Role      @default(USER)
+  sessionVersion Int      @default(0)
+  twoFactorMethod String   @default("NONE")
+  twoFactorSecret String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts         Account[]
+  sessions         Session[]
+  entries          Entry[]
+  tags             Tag[]
+  annotations      Annotation[]
+  preference       UserPreference?
+  siteCredentials  SiteCredential[]
+  taggingRules     TaggingRule[]
+  ignoreOriginRules IgnoreOriginRule[]
+  apiTokens        ApiToken[]
+  oauthClients     OAuthClient[] @relation("OAuthClientOwner")
+  oauthAccessTokens OAuthAccessToken[] @relation("OAuthAccessTokenUser")
+  oauthRefreshTokens OAuthRefreshToken[] @relation("OAuthRefreshTokenUser")
+  oauthAuthorizationCodes OAuthAuthorizationCode[] @relation("OAuthAuthorizationCodeUser")
+  imports          ImportJob[]
+  entryImages      EntryImage[]
+  pocketAuthorization PocketAuthorization?
+  twoFactorSetup   TwoFactorSetup?
+  twoFactorChallenges TwoFactorChallenge[]
+  trustedDevices   TrustedDevice[]
+  recoveryCodes    RecoveryCode[]
+  signInGrants     SignInGrant[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Entry {
+  id             String   @id @default(cuid())
+  userId         String
+  uid            String?  @unique
+  title          String
+  url            String
+  givenUrl       String
+  urlHash        String
+  originUrl      String?
+  content        String
+  summary        String?
+  archived       Boolean  @default(false)
+  archivedAt     DateTime?
+  starred        Boolean  @default(false)
+  starredAt      DateTime?
+  publishedAt    DateTime?
+  publishedBy    Json?
+  mimeType       String?
+  language       String?
+  readingTime    Int      @default(0)
+  domainName     String?
+  previewPicture String?
+  httpStatus     Int?
+  headers        Json?
+  isNotParsed    Boolean  @default(false)
+  extractionError String?
+  shareToken     String?  @unique
+  sharedAt       DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tags        Tag[]
+  annotations Annotation[]
+  images      EntryImage[]
+
+  @@unique([userId, urlHash])
+  @@index([userId, archived, createdAt])
+  @@index([userId, starred, starredAt])
+  @@index([userId, domainName])
+  @@index([userId, language])
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  userId    String
+  label     String
+  slug      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entries   Entry[]
+
+  @@unique([userId, slug])
+  @@index([userId, label])
+}
+
+model Annotation {
+  id        String   @id @default(cuid())
+  userId    String
+  entryId   String
+  text      String
+  quote     String
+  ranges    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry     Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([entryId])
+  @@index([userId])
+}
+
+model UserPreference {
+  id                String  @id @default(cuid())
+  userId            String  @unique
+  itemsPerPage      Int     @default(20)
+  language          String  @default("en")
+  feedToken         String? @unique
+  feedLimit         Int     @default(50)
+  readingSpeed      Float   @default(200)
+  actionMarkAsRead  Boolean @default(false)
+  listMode          Boolean @default(false)
+  displayThumbnails Boolean @default(true)
+  font              String  @default("sans")
+  fontSize          Float   @default(1)
+  lineHeight        Float   @default(1.75)
+  maxWidth          Int     @default(760)
+  customCss         String?
+  pocketConsumerKey String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SiteCredential {
+  id                String   @id @default(cuid())
+  userId            String
+  host              String
+  encryptedUsername String
+  encryptedPassword String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, host])
+}
+
+model TaggingRule {
+  id        String   @id @default(cuid())
+  userId    String
+  rule      String
+  tags      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model IgnoreOriginRule {
+  id        String   @id @default(cuid())
+  userId    String
+  rule      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model IgnoreOriginInstanceRule {
+  id        String   @id @default(cuid())
+  rule      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model InstanceConfiguration {
+  id                    String   @id @default("default")
+  downloadImagesEnabled Boolean  @default(false)
+  imageMaxCount         Int      @default(30)
+  imageMaxBytes         Int      @default(5000000)
+  imageEntryMaxBytes    Int      @default(30000000)
+  imageUserMaxBytes     Int      @default(1000000000)
+  updatedAt             DateTime @updatedAt
+}
+
+model EntryImage {
+  id           String   @id
+  userId       String
+  entryId      String
+  originalUrl  String
+  contentType  String
+  byteSize     Int
+  sha256       String
+  relativePath String   @unique
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry        Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([entryId])
+  @@index([entryId, sha256])
+}
+
+model ApiToken {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  tokenHash  String    @unique
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model OAuthClient {
+  id                String   @id @default(cuid())
+  userId            String
+  publicId          String   @unique
+  name              String
+  secretHash        String
+  redirectUris      Json
+  allowedGrantTypes Json
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user               User    @relation("OAuthClientOwner", fields: [userId], references: [id], onDelete: Cascade)
+  accessTokens       OAuthAccessToken[]
+  refreshTokens      OAuthRefreshToken[]
+  authorizationCodes OAuthAuthorizationCode[]
+
+  @@index([userId, createdAt])
+}
+
+model OAuthAccessToken {
+  id         String    @id @default(cuid())
+  clientId   String
+  userId     String
+  tokenHash  String    @unique
+  scope      String?
+  expiresAt  DateTime
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  client     OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user       User      @relation("OAuthAccessTokenUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model OAuthRefreshToken {
+  id        String   @id @default(cuid())
+  clientId  String
+  userId    String
+  tokenHash String   @unique
+  scope     String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  client    OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user      User     @relation("OAuthRefreshTokenUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model OAuthAuthorizationCode {
+  id                  String    @id @default(cuid())
+  clientId            String
+  userId              String
+  codeHash             String    @unique
+  redirectUri          String
+  scope                String?
+  codeChallenge        String?
+  codeChallengeMethod  String?
+  expiresAt            DateTime
+  usedAt               DateTime?
+  createdAt            DateTime  @default(now())
+  client               OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user                 User      @relation("OAuthAuthorizationCodeUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model ImportJob {
+  id               String   @id @default(cuid())
+  userId           String
+  source           String
+  status           String   @default("pending")
+  total            Int      @default(0)
+  imported         Int      @default(0)
+  skipped          Int      @default(0)
+  failed           Int      @default(0)
+  error            String?
+  attempts         Int      @default(0)
+  availableAt      DateTime @default(now())
+  lockedAt         DateTime?
+  heartbeatAt      DateTime?
+  workerId         String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  remoteCredential String?
+  options          Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items            ImportJobItem[]
+
+  @@index([userId, createdAt])
+  @@index([status, availableAt])
+}
+
+model ImportJobItem {
+  id          String   @id @default(cuid())
+  jobId       String
+  position    Int
+  payload     Json
+  status      String   @default("pending")
+  attempts    Int      @default(0)
+  availableAt DateTime @default(now())
+  lockedAt    DateTime?
+  workerId    String?
+  entryId     String?
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  job         ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, position])
+  @@index([jobId, status, availableAt])
+}
+
+model PocketAuthorization {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  encryptedRequestToken String
+  markAsRead            Boolean  @default(false)
+  expiresAt             DateTime
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TwoFactorSetup {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  method             String
+  encryptedSecret    String?
+  emailCodeHash      String?
+  recoveryCodeHashes Json?
+  attempts           Int      @default(0)
+  expiresAt          DateTime
+  createdAt          DateTime @default(now())
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TwoFactorChallenge {
+  id            String   @id @default(cuid())
+  userId        String
+  tokenHash     String   @unique
+  method        String
+  emailCodeHash String?
+  attempts      Int      @default(0)
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model TrustedDevice {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  lastUsedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model RecoveryCode {
+  id        String   @id @default(cuid())
+  userId    String
+  codeHash  String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model SignInGrant {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}

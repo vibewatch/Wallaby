@@ -1,0 +1,33 @@
+title: //meta[@name='og:title']/@content
+author: //meta[@name='author']/@content
+body: //main/article
+
+strip_id_or_class: send-gift-article-email
+strip_id_or_class: point-final
+strip_id_or_class: at-above-post
+strip_id_or_class: at-below-post
+
+strip: //footer
+strip: //blockquote[contains(@class, 'wp-embedded-content')]
+
+test_url: https://www.mediacites.fr/decryptage/toulouse/2024/04/22/les-parents-du-college-berthelot-de-toulouse-tirent-la-sonnette-dalarme/
+
+### login only for wallabag, DO NOT paste you credentials here, you need to do this in wallabag's UI
+###
+### If you are subscribing via lapresselibre, please remove or #de-activate the following block AND
+### Login with your browser and find the session-cookie you can put this in here by removing the ""
+### and replace the : with =
+### do NOT log out in your browser, remove cookie there instead if needed.
+# http_header(cookie): wordpress_logged_in_abcd=yourusername%C7_long_hash
+
+requires_login: yes
+login_uri: https://www.mediacites.fr/mon-compte/
+not_logged_in_xpath: //div[contains(concat(' ',normalize-space(@class),' '),' restrictblock ')]
+login_username_field: rcp_user_login 
+login_password_field: rcp_user_pass
+login_extra_fields: rcp_login_nonce=@=xpath('//form[@id="rcp_login_form"]//input[@name="rcp_login_nonce"]', request_html('https://www.mediacites.fr/mon-compte/'))
+login_extra_fields: rcp_user_remember=1
+login_extra_fields: rcp_action=login
+login_extra_fields: rcp_redirect=https://www.mediacites.fr/mon-compte/
+login_extra_fields: rcp_login_submit=Connexion
+test_url: https://www.mediacites.fr/toulouse/enquete-toulouse/2018/07/17/les-eaux-troubles-du-canal-du-midi/

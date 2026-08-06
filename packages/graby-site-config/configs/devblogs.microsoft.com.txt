@@ -1,0 +1,4 @@
+title: //main[@id="main"]//header/h1
+body: //main[@id="main"]//div[@id="single-wrapper"]//article[@data-clarity-region="article"]
+
+test_url: https://devblogs.microsoft.com/oldnewthing/?p=42203

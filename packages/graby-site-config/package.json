@@ -1,0 +1,8 @@
+{
+  "name": "@wallaby/graby-site-config",
+  "version": "2026.7.0",
+  "private": true,
+  "description": "CC0 host extraction rules mirrored from j0k3r/graby-site-config.",
+  "license": "CC0-1.0",
+  "files": ["configs", "README.md", "SOURCE.md"]
+}

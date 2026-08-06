@@ -1,0 +1,11 @@
+title: //h1[@itemprop='name']
+body: //div[contains(concat(' ',normalize-space(@class),' '),' article-intro ')] | //div[contains(concat(' ',normalize-space(@class),' '),' article-body ')]
+author: substring-after(//div[@class='article-author-top'], 'von ')
+date: //meta[@property="date"]/@content
+
+strip_id_or_class: img-left
+strip_id_or_class: img-right
+strip_id_or_class: content-box
+
+test_url: https://www.klimareporter.de/deutschland/wissenschaftler-fordern-klimaschutzgesetz
+test_contains: Union und SPD über die richtige Art der CO

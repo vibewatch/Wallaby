@@ -1,0 +1,6 @@
+title: //body//h1
+body: //body//article
+
+prune: no
+                                            
+test_url: https://cloud.google.com/blog/products/gcp/how-to-crunch-your-business-data-from-sheets-in-bigquery

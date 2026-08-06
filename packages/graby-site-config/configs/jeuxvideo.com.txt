@@ -1,0 +1,12 @@
+body: //article | //div[contains(@class, 'layout__contentBefore')] | //div[contains(@class, 'layout__contentMainMedia')]
+author: //div[@class='userSignature__name']
+
+strip_id_or_class: articleHeader
+strip_id_or_class: userSignature
+
+prune: no
+insert_detected_image: no 
+
+test_url: http://www.jeuxvideo.com/news/431383/lancement-cosmique-pour-devouring-stars.htm
+test_url: http://www.jeuxvideo.com/test/431612/massive-chalice-du-tour-par-tour-medieval-independant.htm
+test_url: http://www.jeuxvideo.com/videos/431381/devouring-stars-moisson-d-etoiles.htm

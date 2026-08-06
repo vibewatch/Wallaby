@@ -1,0 +1,5 @@
+body: /html/body/main
+
+prune: no
+
+test_url: https://danluu.com/look-stupid/

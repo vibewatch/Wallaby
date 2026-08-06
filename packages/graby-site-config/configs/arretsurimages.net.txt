@@ -1,0 +1,32 @@
+# Site uses JavaScript, API-calls and/or techniques to prevent content catching, so...
+
+# This works NOT with ftr.fivefilters.net (FTR|Fulltext-RSS)
+# This works NOT with wallabag UI
+
+# This only works with wallabagger browser-plugin with activated
+# option 'Retrieve content from the browser' in it's settings
+
+title://div[contains(concat(' ',normalize-space(@class),' '),' article-body ')]/h1
+author: //li[contains(concat(' ',normalize-space(@class),' '),' author-name ')]/a[contains(concat(' ',normalize-space(@class),' '),' name-link ')]
+date: //time[contains(concat(' ',normalize-space(@class),' '),' publication-date ')]/@datetime
+body: //article[@class='article']/div[@id='ShareTest']/div[contains(@class, 'article-body')]
+
+strip: //aside
+strip: //svg[@tooltip=""]
+
+strip_id_or_class: mobile-only
+strip_id_or_class: article-header
+strip_id_or_class: content-stamp-component
+
+
+# Wallabag-specific login directives (not supported in FTR)
+# TODO(kdecherf): login is broken
+# requires_login: no
+
+# login_uri: http://www.arretsurimages.net/forum/login.php
+# login_username_field: username
+# login_password_field: password
+
+# not_logged_in_xpath: //body[@class="not-logged-in"]
+
+test_url: https://www.arretsurimages.net/articles/sur-le-site-de-ouest-france-des-contenus-ecrits-en-partie-par-lia
