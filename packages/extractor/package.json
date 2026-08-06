@@ -1,8 +1,8 @@
 {
-  "name": "@wallaby/graby",
+  "name": "@wallaby/extractor",
   "version": "0.1.0",
   "private": true,
-  "description": "A TypeScript implementation of Graby's article extraction contracts.",
+  "description": "Wallaby's TypeScript article-extraction engine.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -17,6 +17,14 @@
     "pdfjs-dist": "^4.10.38",
     "safe-regex2": "^5.1.1",
     "sanitize-html": "2.17.6"
+  },
+  "peerDependencies": {
+    "playwright": "*"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/jsdom": "21.1.7",

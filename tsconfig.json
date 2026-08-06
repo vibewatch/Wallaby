@@ -26,11 +26,11 @@
       "@/*": [
         "./*"
       ],
-      "@wallaby/graby": [
-        "./packages/graby/src/index.ts"
+      "@wallaby/extractor": [
+        "./packages/extractor/src/index.ts"
       ],
-      "@wallaby/graby/node": [
-        "./packages/graby/src/node.ts"
+      "@wallaby/extractor/node": [
+        "./packages/extractor/src/node.ts"
       ]
     }
   },

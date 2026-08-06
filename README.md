@@ -1,8 +1,8 @@
 # Wallaby
 
-Wallaby is a modern, self-hosted read-it-later application built with Next.js, Auth.js (NextAuth), and Prisma. Its product model and compatibility API follow wallabag, while `@wallaby/graby` provides a native TypeScript article-extraction engine modeled on Graby's public contracts.
+Wallaby is a modern, self-hosted read-it-later application built with Next.js, Auth.js (NextAuth), and Prisma. It offers an opt-in wallabag-compatible API so existing wallabag clients and exports keep working, while its own TypeScript extraction engine pulls readable content from the web.
 
-The repository is intentionally evidence-driven about parity. The implemented workflow and compatibility matrix, including deliberate opaque-ID semantics, is tracked in [the wallabag parity map](docs/WALLABAG_PARITY.md).
+The repository is evidence-driven about its wallabag compatibility surface. The implemented workflow and compatibility matrix, including deliberate opaque-ID semantics, is tracked in [the wallabag compatibility map](docs/WALLABAG_PARITY.md).
 
 ## What works
 
@@ -17,7 +17,7 @@ The repository is intentionally evidence-driven about parity. The implemented wo
 - Automatic tagging rules with the wallabag operator matrix, apply-all, JSON portability, and settings/API management
 - Durable portable imports for wallabag JSON, Pocket OAuth/CSV/HTML, Instapaper, bookmarks, Pinboard, and Omnivore plus JSON/CSV/XML/Markdown/text, EPUB 3, and multilingual PDF exports
 - A wallabag-shaped JSON API for entries, search, tags, annotations, configuration, and instance information
-- A standalone TypeScript Graby implementation with 2,037 CC0 site configs, XPath rules, metadata, Readability, multipage handling, sanitization, and SSRF-aware fetching
+- A standalone TypeScript extraction engine with 2,037 CC0 site configs, XPath rules, metadata, Readability, multipage handling, sanitization, and SSRF-aware fetching
 
 ## Local setup
 
@@ -75,16 +75,16 @@ File imports accept wallabag's importer names and `--markAsRead`, `--useUserId`,
 
 OAuth2 applications can also be created and revoked under **Settings → API access → Manage developer clients**. Wallaby exposes `/oauth/v2/auth` and `/oauth/v2/token` with authorization-code (including S256 PKCE), rotating refresh-token, password, and legacy implicit grants. Access tokens expire after one hour; refresh tokens expire after 30 days and rotate on every use. Password grants are rejected for accounts with two-factor authentication. Client secrets, access tokens, refresh tokens, and authorization codes are stored only as SHA-256 hashes.
 
-The Graby port has focused tests under `packages/graby/tests`, and `npm run test:site-configs` reconciles the complete site-config corpus. The deeper compatibility work still needed against upstream fixtures is recorded in [the Graby implementation map](docs/GRABY_TYPESCRIPT.md).
+The extraction engine has focused tests under `packages/extractor/tests`, and `npm run test:site-configs` reconciles the complete site-config corpus. The extraction-contract map and remaining fixture work are recorded in [the extraction engine map](docs/EXTRACTOR.md).
 
 Downloaded article images are opt-in under Administration. Set `WALLABY_MEDIA_DIR` to a persistent writable volume before enabling the policy. Wallaby re-encodes supported raster images, applies instance byte/count/pixel quotas, and serves content-addressed immutable responses from `/media/:id`. Use `npm run images:cleanup -- --dry-run` to audit orphaned files, then omit `--dry-run` to reconcile the store.
 
-## TypeScript Graby usage
+## Extractor usage
 
 ```ts
-import { Graby } from "@wallaby/graby";
+import { Extractor } from "@wallaby/extractor";
 
-const graby = new Graby({
+const extractor = new Extractor({
   siteConfigs: {
     "example.com.txt": `
       title: //h1
@@ -94,7 +94,7 @@ const graby = new Graby({
   },
 });
 
-const article = await graby.fetchContent("https://example.com/story");
+const article = await extractor.fetchContent("https://example.com/story");
 ```
 
 The main compatibility methods are `fetchContent`, `cleanupHtml`, `setContentAsPrefetched`, `toggleImgNoReferrer`, and `reloadConfigFiles`. `ContentExtractor`, `ConfigBuilder`, `SiteConfig`, and the fetch transport are also exported for independent use.
@@ -115,8 +115,8 @@ Session-authenticated browser calls work too. JSON and XML aliases use wallabag 
 - `auth.ts` — Auth.js configuration and credentials provider
 - `prisma/schema.prisma` — users, entries, tags, annotations, preferences, credentials, rules, API tokens, and import jobs
 - `lib/entries.ts` — the extraction-to-persistence boundary
-- `packages/graby/` — framework-independent TypeScript extraction package
-- `packages/graby-site-config/` — 2,037 versioned host extraction definitions from the CC0 upstream corpus
+- `packages/extractor/` — framework-independent TypeScript extraction engine
+- `packages/extractor-site-config/` — 2,037 versioned host extraction definitions from the CC0 upstream corpus
 - `docs/` — evidence-based parity and extraction-contract maps
 
-The adjacent `../wallabag` checkout is treated as the feature authority during development. The current map was derived from its 123 controller routes, entity model, import controllers, and Graby integration at commit `f9d890d53`; Graby behavior was inspected at commit `3f89075`.
+The adjacent `../wallabag` checkout is treated as the reference for the compatibility API during development. The current map was derived from its 123 controller routes, entity model, and import controllers at commit `f9d890d53`; the extraction contracts that informed this engine were inspected in `j0k3r/graby` at commit `3f89075`.

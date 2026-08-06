@@ -2,8 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, posix, relative, resolve, sep } from "node:path";
 
-import type { Fetcher, FetchResult } from "@wallaby/graby";
-import { HttpFetcher } from "@wallaby/graby";
+import type { Fetcher, FetchResult } from "@wallaby/extractor";
+import { HttpFetcher } from "@wallaby/extractor";
 import type { Prisma } from "@prisma/client";
 import { JSDOM } from "jsdom";
 import sharp from "sharp";

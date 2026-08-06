@@ -23,9 +23,12 @@ const blockedRanges = new Set([
 export function normalizeUrl(input: string | URL): URL {
   if (input instanceof URL) return new URL(input);
   let value = input.trim();
-  if (!/^(https?|feed):\/\//i.test(value)) value = `https://${value}`;
+  // Rewrite the feed: scheme before parsing. The WHATWG URL protocol setter is a
+  // no-op when converting a non-special scheme (feed:) to a special one (https:),
+  // so string replacement is the only reliable path.
+  value = value.replace(/^feed:\/\//i, "https://");
+  if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
   const url = new URL(value);
-  if (url.protocol === "feed:") url.protocol = "https:";
   if (!['http:', 'https:'].includes(url.protocol)) throw new TypeError(`Unsupported URL scheme: ${url.protocol}`);
   if (url.username || url.password) throw new TypeError("URLs containing credentials are not allowed");
   return url;

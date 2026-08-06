@@ -32,7 +32,7 @@ export default async function ImportPage({ searchParams }: { searchParams: Promi
           <label className="file-picker"><span>Export file</span><input name="file" type="file" accept=".json,.csv,.html,.htm" required /></label>
           <button className="primary-button">Import entries</button>
         </form>
-        <p className="import-note">Up to 5,000 entries or 20 MB per job. URL-only records are fetched through Graby; embedded wallabag content is sanitized without another network request.</p>
+        <p className="import-note">Up to 5,000 entries or 20 MB per job. URL-only records are fetched through the extraction engine; content already embedded in the import file is sanitized without another network request.</p>
       </section>
       <section className="portability-card">
         <div className="portability-title"><Upload size={20} /><div><h2>Import from Pocket API</h2><p>Connect a retrieve-only Pocket application. OAuth tokens are encrypted and discarded when the durable job is hydrated.</p></div></div>

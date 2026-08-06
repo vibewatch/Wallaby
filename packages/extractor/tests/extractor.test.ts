@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 
-import { Graby, type Fetcher, type FetchRequestOptions } from "../src";
+import { Extractor, type Fetcher, type FetchRequestOptions } from "../src";
 
-describe("Graby", () => {
+describe("Extractor", () => {
   it("returns wallabag-ready content through an injectable transport", async () => {
     const fetcher: Fetcher = {
       async fetch() {
@@ -17,7 +17,7 @@ describe("Graby", () => {
       },
     };
 
-    const content = await new Graby({ fetcher }).fetchContent("example.com/article");
+    const content = await new Extractor({ fetcher }).fetchContent("example.com/article");
 
     expect(content.title).toBe("Transport title");
     expect(content.url).toBe("https://example.com/final");
@@ -26,10 +26,10 @@ describe("Graby", () => {
     expect(content.summary.length).toBeGreaterThan(20);
   });
 
-  it("supports Graby's prefetched-content path", async () => {
-    const graby = new Graby();
-    graby.setContentAsPrefetched(`<html><head><title>Prefetched</title></head><body><article><h1>Prefetched</h1><p>${"Offline article. ".repeat(80)}</p></article></body></html>`);
-    const content = await graby.fetchContent("https://example.com/offline");
+  it("supports Extractor's prefetched-content path", async () => {
+    const extractor = new Extractor();
+    extractor.setContentAsPrefetched(`<html><head><title>Prefetched</title></head><body><article><h1>Prefetched</h1><p>${"Offline article. ".repeat(80)}</p></article></body></html>`);
+    const content = await extractor.fetchContent("https://example.com/offline");
 
     expect(content.title).toContain("Prefetched");
     expect(content.html).toContain("Offline article");
@@ -41,7 +41,7 @@ describe("Graby", () => {
         return htmlResponse(url, `<html><head><meta name="generator" content="WordPress 7"></head><body><nav>${"Noise ".repeat(80)}</nav><main id="wordpress-story"><p>${"Fingerprint story. ".repeat(60)}</p></main></body></html>`);
       },
     };
-    const graby = new Graby({
+    const extractor = new Extractor({
       fetcher,
       fingerprints: { "<meta[^>]+generator[^>]+WordPress": "fingerprint.wordpress.com" },
       siteConfigs: {
@@ -49,7 +49,7 @@ describe("Graby", () => {
       },
     });
 
-    const content = await graby.fetchContent("https://unknown.example/story");
+    const content = await extractor.fetchContent("https://unknown.example/story");
     expect(content.html).toContain("Fingerprint story");
     expect(content.html).not.toContain("Noise");
   });
@@ -61,12 +61,12 @@ describe("Graby", () => {
         return htmlResponse(url, `<html><head><title>Teaser</title></head><body><article><p>Short teaser.</p></article><a class="print" href="/print">Print</a></body></html>`);
       },
     };
-    const graby = new Graby({
+    const extractor = new Extractor({
       fetcher,
       siteConfigs: { "example.com.txt": "body: //article\nsingle_page_link: //a[@class='print']" },
     });
 
-    const content = await graby.fetchContent("https://example.com/story");
+    const content = await extractor.fetchContent("https://example.com/story");
     expect(content.url).toBe("https://example.com/print");
     expect(content.html).toContain("Complete single-page text");
     expect(content.html).not.toContain("Short teaser");
@@ -78,22 +78,42 @@ describe("Graby", () => {
       async fetch(url) {
         calls.push(url.pathname);
         const page = Number(url.searchParams.get("page") ?? 1);
-        const next = page < 3 ? page + 1 : 3;
-        return htmlResponse(url, `<html><head><title>Series</title></head><body><article><p>${`Page ${page} chapter. `.repeat(50)}</p></article><a rel="next" href="?page=${next}">Next</a></body></html>`);
+        const nextLink = page < 3 ? `<a rel="next" href="?page=${page + 1}">Next</a>` : "";
+        return htmlResponse(url, `<html><head><title>Series</title></head><body><article><p>${`Page ${page} chapter. `.repeat(50)}</p></article>${nextLink}</body></html>`);
       },
     };
-    const graby = new Graby({
+    const extractor = new Extractor({
       fetcher,
       maxPages: 6,
       siteConfigs: { "example.com.txt": "body: //article\nnext_page_link: //a[@rel='next']" },
     });
 
-    const content = await graby.fetchContent("https://example.com/series?page=1");
+    const content = await extractor.fetchContent("https://example.com/series?page=1");
     expect(content.html).toContain("Page 1 chapter");
     expect(content.html).toContain("Page 2 chapter");
     expect(content.html).toContain("Page 3 chapter");
     expect(content.html.match(/wallaby-page-break/g)).toHaveLength(2);
     expect(calls).toEqual(["/series", "/series", "/series"]);
+  });
+
+  it("discards partial multi-page content and appends a notice when the walk is interrupted", async () => {
+    const fetcher: Fetcher = {
+      async fetch(url) {
+        const page = Number(url.searchParams.get("page") ?? 1);
+        // Every page links to the next, so the walk hits the maxPages ceiling and is interrupted.
+        return htmlResponse(url, `<html><head><title>Endless</title></head><body><article><p>${`Page ${page} chapter. `.repeat(50)}</p></article><a rel="next" href="?page=${page + 1}">Next</a></body></html>`);
+      },
+    };
+    const extractor = new Extractor({
+      fetcher,
+      maxPages: 3,
+      siteConfigs: { "example.com.txt": "body: //article\nnext_page_link: //a[@rel='next']" },
+    });
+
+    const content = await extractor.fetchContent("https://example.com/series?page=1");
+    expect(content.html).toContain("Page 1 chapter");
+    expect(content.html).toContain("could not extract");
+    expect(content.html).not.toContain("Page 3 chapter");
   });
 
   it("logs in with site-config fields and carries cookies to the article request", async () => {
@@ -112,7 +132,7 @@ describe("Graby", () => {
         return htmlResponse(url, `<html><head><title>Private</title></head><body><article><p>${"Private article. ".repeat(70)}</p></article></body></html>`);
       },
     };
-    const graby = new Graby({
+    const extractor = new Extractor({
       fetcher,
       siteConfigs: {
         "private.example.txt": [
@@ -126,7 +146,7 @@ describe("Graby", () => {
       },
     });
 
-    const content = await graby.fetchContent(
+    const content = await extractor.fetchContent(
       "https://private.example/story",
       undefined,
       { username: "reader@example.com", password: "correct-horse" },
@@ -155,7 +175,7 @@ describe("Graby", () => {
         return htmlResponse(url, `<article><p>${"Authenticated expression content. ".repeat(60)}</p></article>`);
       },
     };
-    const graby = new Graby({
+    const extractor = new Extractor({
       fetcher,
       siteConfigs: {
         "private.example.txt": [
@@ -170,7 +190,7 @@ describe("Graby", () => {
       },
     });
 
-    const content = await graby.fetchContent("https://private.example/story", undefined, { username: "reader", password: "secret" });
+    const content = await extractor.fetchContent("https://private.example/story", undefined, { username: "reader", password: "secret" });
     expect(content.html).toContain("Authenticated expression content");
     expect(requests.map(({ path }) => path)).toEqual(["/session", "/nonce", "/session", "/story"]);
   });
@@ -197,7 +217,7 @@ describe("Graby", () => {
       },
     };
 
-    const content = await new Graby({ fetcher }).fetchContent("https://example.com/story.pdf");
+    const content = await new Extractor({ fetcher }).fetchContent("https://example.com/story.pdf");
     expect(content.title).toBe("A portable PDF story");
     expect(content.authors).toEqual(["Ada Reader"]);
     expect(content.date).toBe("2024-03-02T10:20:30.000Z");
@@ -211,7 +231,7 @@ describe("Graby", () => {
     ["audio/mpeg", "Audio", "Download Audio"],
     ["video/mp4", "Video", "Download Video"],
   ])("uses default MIME actions for %s", async (mimeType, title, linkText) => {
-    const content = await new Graby({ fetcher: mimeResponse(mimeType) }).fetchContent("https://example.com/asset");
+    const content = await new Extractor({ fetcher: mimeResponse(mimeType) }).fetchContent("https://example.com/asset");
 
     expect(content.title).toBe(title);
     expect(content.html).toBe(`<a href="https://example.com/asset">${linkText}</a>`);
@@ -220,7 +240,7 @@ describe("Graby", () => {
   });
 
   it("prefers a full MIME action over its top-level fallback", async () => {
-    const graby = new Graby({
+    const extractor = new Extractor({
       fetcher: mimeResponse("image/svg+xml"),
       contentTypeActions: {
         image: { action: "link", name: "Picture" },
@@ -228,41 +248,41 @@ describe("Graby", () => {
       },
     });
 
-    const content = await graby.fetchContent("https://example.com/art.svg");
+    const content = await extractor.fetchContent("https://example.com/art.svg");
     expect(content.title).toBe("Vector");
     expect(content.html).toContain('alt="Vector"');
     expect(content.image).toBe("https://example.com/art.svg");
   });
 
   it("supports custom link names without allowing HTML injection", async () => {
-    const graby = new Graby({
+    const extractor = new Extractor({
       fetcher: mimeResponse("application/vnd.example"),
       contentTypeActions: {
         "application/vnd.example": { action: "link", name: '<Custom & "safe">' },
       },
     });
 
-    const content = await graby.fetchContent("https://example.com/custom.bin");
+    const content = await extractor.fetchContent("https://example.com/custom.bin");
     expect(content.title).toBe('<Custom & "safe">');
     expect(content.html).toBe('<a href="https://example.com/custom.bin">Download &lt;Custom &amp; &quot;safe&quot;&gt;</a>');
   });
 
   it("rejects a MIME type configured for exclusion", async () => {
-    const graby = new Graby({
+    const extractor = new Extractor({
       fetcher: mimeResponse("application/x-msdownload"),
       contentTypeActions: {
         "application/x-msdownload": { action: "exclude", name: "Executable" },
       },
     });
 
-    await expect(graby.fetchContent("https://example.com/virus.exe")).rejects.toThrow(
+    await expect(extractor.fetchContent("https://example.com/virus.exe")).rejects.toThrow(
       'The URL "https://example.com/virus.exe" is blocked by its MIME action.',
     );
   });
 
   it("keeps the specialized plain-text path behind the MIME action matrix", async () => {
     const fetcher = mimeResponse("text/plain", '<unsafe> & "readable"');
-    const content = await new Graby({ fetcher }).fetchContent("https://example.com/note.txt");
+    const content = await new Extractor({ fetcher }).fetchContent("https://example.com/note.txt");
 
     expect(content.title).toBe("Plain text");
     expect(content.html).toBe("<pre>&lt;unsafe&gt; &amp; &quot;readable&quot;</pre>");
@@ -278,13 +298,13 @@ describe("Graby", () => {
         return htmlResponse(url, `<article><p>${"Logged article. ".repeat(60)}</p></article>`);
       },
     };
-    const graby = new Graby({
+    const extractor = new Extractor({
       fetcher,
       logger,
       siteConfigs: { "private.example.txt": "requires_login: yes\nlogin_uri: /login\nlogin_username_field: user\nlogin_password_field: pass\nbody: //article" },
     });
-    await graby.fetchContent("https://private.example/story", undefined, { username: "sensitive-user", password: "sensitive-password" });
-    expect(events.map(({ message }) => message)).toEqual(expect.arrayContaining(["graby.fetch.start", "graby.login.start", "graby.login.complete", "graby.fetch.complete"]));
+    await extractor.fetchContent("https://private.example/story", undefined, { username: "sensitive-user", password: "sensitive-password" });
+    expect(events.map(({ message }) => message)).toEqual(expect.arrayContaining(["extractor.fetch.start", "extractor.login.start", "extractor.login.complete", "extractor.fetch.complete"]));
     const serialized = JSON.stringify(events);
     expect(serialized).not.toContain("sensitive-user");
     expect(serialized).not.toContain("sensitive-password");

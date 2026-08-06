@@ -8,7 +8,7 @@ import { apiError, apiRequestObject } from "@/lib/api-response";
 import { db } from "@/lib/db";
 import { serializeEntry } from "@/lib/entry-serializer";
 import { createEntry, parseTags, slugify } from "@/lib/entries";
-import { getGraby } from "@/lib/graby";
+import { getExtractor } from "@/lib/extractor";
 
 export async function GET(request: Request) {
   const userId = await authenticateApiRequest(request);
@@ -99,7 +99,7 @@ export async function POST(request: Request) {
     previewPicture: parsed.data.preview_picture,
   });
   const labels = parseTags(parsed.data.tags);
-  const content = parsed.data.content ? getGraby().cleanupHtml(parsed.data.content, normalizedUrl) : undefined;
+  const content = parsed.data.content ? getExtractor().cleanupHtml(parsed.data.content, normalizedUrl) : undefined;
   const archived = parsed.data.archive ?? base.archived;
   const starred = parsed.data.starred ?? base.starred;
   const entry = await db.entry.update({

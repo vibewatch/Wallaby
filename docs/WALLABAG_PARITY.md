@@ -1,6 +1,6 @@
-# wallabag parity map
+# wallabag compatibility map
 
-This is the implementation ledger for the clone, not a marketing checklist. It was derived from the adjacent wallabag checkout at `f9d890d53`: 123 Symfony controller routes across 38 controllers, the entity model, CLI commands, templates, and user/developer documentation.
+This is the implementation ledger for Wallaby's wallabag-compatible API surface, not a marketing checklist. It was derived from the adjacent wallabag checkout at `f9d890d53`: 123 Symfony controller routes across 38 controllers, the entity model, CLI commands, templates, and user/developer documentation, and it tracks how far Wallaby's own implementation matches that interoperability contract.
 
 Status meanings:
 
@@ -14,8 +14,8 @@ Status meanings:
 |---|---|---|---|
 | Sign in and session management | Supported | Auth.js credentials provider, Prisma adapter models, protected app routes, versioned cross-browser session invalidation, and two-phase 2FA grants | Registration, password reset, email verification, OAuth providers |
 | Add an entry by URL | Supported | Save form and `POST /api/entries`; normalized per-user dedupe | Bookmarklet and browser-extension landing flow |
-| Extract readable article content | Supported | `@wallaby/graby` feeds title/content/metadata into Prisma | Complete Graby matrix below; background retry queue |
-| Imported/prefetched HTML | Supported | API accepts `content`; Graby prefetched path cleans it | Import UI and importer-specific normalization |
+| Extract readable article content | Supported | `@wallaby/extractor` feeds title/content/metadata into Prisma | Complete extraction matrix in `docs/EXTRACTOR.md`; background retry queue |
+| Imported/prefetched HTML | Supported | API accepts `content`; the prefetched path cleans it | Import UI and importer-specific normalization |
 | Unread, archive, starred, all lists | Supported | Persisted views, counts, pagination, responsive cards | wallabag's list/grid mode switch and bulk selection |
 | Untagged, annotated, same-domain, random views | Supported | Persisted filtered lists, sidebar/card/reader navigation, and origin-preserving random-entry redirects with browser coverage | — |
 | Archive, star, delete, reload | Supported | Reader/card server actions and entry API | Undo notification and configurable post-action redirect |
@@ -78,4 +78,4 @@ The schema is broader than the UI on purpose, but a modeled table is never count
 
 ## Completion rule
 
-Clone parity is not complete while any row above is **Partial** or **Planned**, or while `docs/GRABY_TYPESCRIPT.md` has incomplete contract rows. Each promotion to **Supported** should add behavior-level tests, not only a route or schema field.
+wallabag compatibility is not complete while any row above is **Partial** or **Planned**, or while `docs/EXTRACTOR.md` has incomplete contract rows. Each promotion to **Supported** should add behavior-level tests, not only a route or schema field.

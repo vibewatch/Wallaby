@@ -134,7 +134,7 @@ export default async function SettingsPage() {
         </div>
       </section>
       <section className="settings-section">
-        <div className="settings-label"><LockKeyhole size={18} /><div><h2>Site credentials</h2><p>Encrypted logins for publications supported by Graby configs.</p></div></div>
+        <div className="settings-label"><LockKeyhole size={18} /><div><h2>Site credentials</h2><p>Encrypted logins for publications supported by the extraction site configs.</p></div></div>
         <div className="settings-content">
           {!credentialEncryptionReady ? <p className="settings-warning">Set a valid 32-byte `SITE_CREDENTIALS_KEY` before storing site logins.</p> : (
             <form action={saveSiteCredential} className="credential-form">

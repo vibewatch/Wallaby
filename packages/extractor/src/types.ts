@@ -56,7 +56,7 @@ export interface SiteCredential {
   password: string;
 }
 
-export interface GrabyLogger {
+export interface ExtractorLogger {
   debug(message: string, context?: Record<string, unknown>): void;
   info(message: string, context?: Record<string, unknown>): void;
   warn(message: string, context?: Record<string, unknown>): void;
@@ -68,7 +68,7 @@ export interface ContentTypeAction {
   name: string;
 }
 
-export interface GrabyOptions {
+export interface ExtractorOptions {
   errorMessage?: string;
   errorMessageTitle?: string;
   contentLinks?: "preserve" | "footnotes" | "remove";
@@ -77,6 +77,14 @@ export interface GrabyOptions {
   maxResponseBytes?: number;
   requestTimeoutMs?: number;
   userAgent?: string;
+  defaultReferer?: string;
+  userAgents?: Record<string, string>;
+  rewriteUrl?: Record<string, Record<string, string>>;
+  botProfiles?: boolean;
+  browserRender?: boolean;
+  allowedUrls?: string[];
+  blockedUrls?: string[];
+  xssFilter?: boolean;
   singlePage?: boolean;
   multiPage?: boolean;
   maxPages?: number;
@@ -84,7 +92,7 @@ export interface GrabyOptions {
   contentTypeActions?: Record<string, ContentTypeAction>;
   siteConfigs?: Record<string, string>;
   fetcher?: Fetcher;
-  logger?: GrabyLogger;
+  logger?: ExtractorLogger;
 }
 
 export type MultiValueDirective =

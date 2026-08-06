@@ -8,7 +8,7 @@ import { apiError, apiRequestObject, stripApiFormat, xmlApiResponse } from "@/li
 import { db } from "@/lib/db";
 import { serializeEntry } from "@/lib/entry-serializer";
 import { parseTags, reloadEntry, slugify } from "@/lib/entries";
-import { getGraby } from "@/lib/graby";
+import { getExtractor } from "@/lib/extractor";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -63,7 +63,7 @@ async function patchEntry(request: Request, id: string): Promise<Response> {
   const tags = parsed.data.tags === undefined ? undefined : parseTags(parsed.data.tags);
   const publishedAt = parsed.data.published_at === undefined ? undefined : parseApiDate(parsed.data.published_at);
   if (parsed.data.published_at !== undefined && !publishedAt) return apiError(400, "invalid_parameter", "published_at is invalid");
-  const content = parsed.data.content === undefined ? undefined : getGraby().cleanupHtml(parsed.data.content, current.url);
+  const content = parsed.data.content === undefined ? undefined : getExtractor().cleanupHtml(parsed.data.content, current.url);
   const shareToken = parsed.data.public === undefined ? undefined : parsed.data.public ? current.shareToken ?? randomBytes(24).toString("base64url") : null;
   const entry = await db.entry.update({
     where: { id },

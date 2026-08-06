@@ -1,9 +1,9 @@
 import { ConfigBuilder, mergeSiteConfig } from "./site-config";
-import { ContentExtractor, type ExtractorOptions } from "./extractor";
+import { ContentExtractor, type ContentExtractorOptions } from "./content-extractor";
 import { HttpFetcher } from "./fetcher";
 import { evaluateLoginExpression } from "./login-expression";
 import { extractPdf } from "./pdf";
-import type { Content, ContentTypeAction, ExtractedContent, FetchResult, GrabyLogger, GrabyOptions, SiteCredential } from "./types";
+import type { Content, ContentTypeAction, ExtractedContent, FetchResult, ExtractorLogger, ExtractorOptions, SiteCredential } from "./types";
 import { normalizeUrl } from "./url";
 
 const defaultContentTypeActions: Record<string, ContentTypeAction> = {
@@ -23,29 +23,40 @@ const defaults = {
   maxRedirects: 5,
   maxResponseBytes: 10 * 1024 * 1024,
   requestTimeoutMs: 15_000,
-  userAgent: "Wallaby Graby/0.1 (+https://github.com/j0k3r/graby)",
+  userAgent: "Wallaby/0.1 (+https://github.com/wallaby/wallaby)",
+  defaultReferer: "http://www.google.co.uk/url?sa=t&source=web&cd=1",
+  userAgents: {} as Record<string, string>,
+  rewriteUrl: {} as Record<string, Record<string, string>>,
+  botProfiles: false,
+  browserRender: false,
+  allowedUrls: [] as string[],
+  blockedUrls: [] as string[],
+  xssFilter: true,
   singlePage: true,
   multiPage: true,
   maxPages: 8,
   contentTypeActions: defaultContentTypeActions,
   fingerprints: {
-    '<meta\\s+[^>]*name=["\\\']generator["\\\'][^>]*content=["\\\']Blogger': "fingerprint.blogspot.com",
-    '<meta\\s+[^>]*name=["\\\']generator["\\\'][^>]*content=["\\\']WordPress': "fingerprint.wordpress.com",
-    '<meta\\s+[^>]*property=["\\\']al:ios:app_name["\\\'][^>]*content=["\\\']Medium': "fingerprint.medium.com",
-    '<link\\s+[^>]*href=["\\\']https://substackcdn\\.com/': "fingerprint.substack.com",
+    "<meta\\s+[^>]*content=[\"']blogger[\"']\\s+[^>]*name=[\"']generator[\"']": "fingerprint.blogspot.com",
+    "<meta\\s+[^>]*name=[\"']generator[\"']\\s+[^>]*content=[\"']Blogger": "fingerprint.blogspot.com",
+    "<meta\\s+[^>]*name=[\"']generator[\"']\\s+[^>]*content=[\"']WordPress": "fingerprint.wordpress.com",
+    "<meta\\s+[^>]*property=[\"']al:ios:app_name[\"']\\s+[^>]*content=[\"']Medium": "fingerprint.medium.com",
+    "<meta\\s+[^>]*data-rh=[\"']true[\"']\\s+[^>]*property=[\"']al:ios:app_name[\"']\\s+[^>]*content=[\"']Medium": "fingerprint.medium.com",
+    "<script>[^<]*\\{[\"']de\\.ippen-digital\\.story\\.onlineId[\"']": "fingerprint.ippen.media",
+    "<link\\s+[^>]*href=[\"']https://substackcdn\\.com/": "fingerprint.substack.com",
   },
 };
 
-export class Graby {
-  private readonly options: Omit<Required<GrabyOptions>, "siteConfigs" | "fetcher" | "logger">;
+export class Extractor {
+  private readonly options: Omit<Required<ExtractorOptions>, "siteConfigs" | "fetcher" | "logger">;
   private readonly extractor: ContentExtractor;
   private readonly configBuilder: ConfigBuilder;
   private readonly fetcher;
-  private readonly logger: GrabyLogger;
+  private readonly logger: ExtractorLogger;
   private prefetchedContent: string | null = null;
   private imgNoReferrer = true;
 
-  constructor(options: GrabyOptions = {}) {
+  constructor(options: ExtractorOptions = {}) {
     this.options = {
       ...defaults,
       ...options,
@@ -61,6 +72,11 @@ export class Graby {
         maxResponseBytes: this.options.maxResponseBytes,
         requestTimeoutMs: this.options.requestTimeoutMs,
         userAgent: this.options.userAgent,
+        defaultReferer: this.options.defaultReferer,
+        rewriteUrl: this.options.rewriteUrl,
+        userAgents: this.options.userAgents,
+        botProfiles: this.options.botProfiles,
+        browserRender: this.options.browserRender,
       });
   }
 
@@ -78,7 +94,10 @@ export class Graby {
 
   async fetchContent(input: string | URL, prefetchedContent?: string, credential?: SiteCredential): Promise<Content> {
     const requestedUrl = normalizeUrl(input);
-    this.logger.debug("graby.fetch.start", { host: requestedUrl.hostname, prefetched: prefetchedContent !== undefined, authenticated: Boolean(credential) });
+    if (!this.isUrlAllowed(requestedUrl.toString())) {
+      throw new Error(`Url "${requestedUrl.toString()}" is not allowed to be parsed.`);
+    }
+    this.logger.debug("extractor.fetch.start", { host: requestedUrl.hostname, prefetched: prefetchedContent !== undefined, authenticated: Boolean(credential) });
     let siteConfig = this.configBuilder.buildFromUrl(requestedUrl);
     let cookies = credential ? await this.login(requestedUrl, siteConfig, credential) : [];
     const prefetched = prefetchedContent ?? (this.prefetchedContent === null ? null : this.takePrefetchedContent());
@@ -108,17 +127,17 @@ export class Graby {
 
     const mimeAction = this.mimeAction(fetched.mimeType);
     if (mimeAction?.action === "exclude") {
-      this.logger.warn("graby.fetch.mime.excluded", { host: effectiveUrl.hostname, mimeType: fetched.mimeType, status: fetched.status });
+      this.logger.warn("extractor.fetch.mime.excluded", { host: effectiveUrl.hostname, mimeType: fetched.mimeType, status: fetched.status });
       throw new Error(`The URL "${effectiveUrl.toString()}" is blocked by its MIME action.`);
     }
     if (mimeAction && fetched.mimeType?.startsWith("image/")) {
-      this.logger.info("graby.fetch.mime", { host: effectiveUrl.hostname, mimeType: fetched.mimeType, status: fetched.status });
+      this.logger.info("extractor.fetch.mime", { host: effectiveUrl.hostname, mimeType: fetched.mimeType, status: fetched.status });
       const escaped = escapeAttribute(effectiveUrl.toString());
       const name = escapeAttribute(mimeAction.name);
       return this.mimeContent(fetched, mimeAction.name, `<a href="${escaped}"><img src="${escaped}" alt="${name}" referrerpolicy="no-referrer"></a>`);
     }
     if (mimeAction && fetched.mimeType === "text/plain") {
-      this.logger.info("graby.fetch.mime", { host: effectiveUrl.hostname, mimeType: fetched.mimeType, status: fetched.status });
+      this.logger.info("extractor.fetch.mime", { host: effectiveUrl.hostname, mimeType: fetched.mimeType, status: fetched.status });
       return this.mimeContent(fetched, mimeAction.name, `<pre>${escapeHtml(fetched.body)}</pre>`);
     }
     if (mimeAction && fetched.mimeType === "application/pdf") {
@@ -143,19 +162,19 @@ export class Graby {
             isNotParsed: !pdf.html,
           };
         } catch {
-          this.logger.warn("graby.pdf.extract.failed", { host: effectiveUrl.hostname, status: fetched.status });
+          this.logger.warn("extractor.pdf.extract.failed", { host: effectiveUrl.hostname, status: fetched.status });
           // Invalid or encrypted PDFs remain available through the safe source link.
         }
       }
       return this.mimeContent(fetched, mimeAction.name, downloadLink(escaped, mimeAction.name));
     }
     if (mimeAction) {
-      this.logger.info("graby.fetch.mime", { host: effectiveUrl.hostname, mimeType: fetched.mimeType, status: fetched.status });
+      this.logger.info("extractor.fetch.mime", { host: effectiveUrl.hostname, mimeType: fetched.mimeType, status: fetched.status });
       const escaped = escapeAttribute(effectiveUrl.toString());
       return this.mimeContent(fetched, mimeAction.name, downloadLink(escaped, mimeAction.name));
     }
     if (fetched.mimeType && !fetched.mimeType.includes("html") && !fetched.mimeType.includes("xml")) {
-      this.logger.info("graby.fetch.mime", { host: effectiveUrl.hostname, mimeType: fetched.mimeType, status: fetched.status });
+      this.logger.info("extractor.fetch.mime", { host: effectiveUrl.hostname, mimeType: fetched.mimeType, status: fetched.status });
       const escaped = escapeAttribute(effectiveUrl.toString());
       return this.mimeContent(fetched, "Download", `<a href="${escaped}">Download file</a>`);
     }
@@ -185,7 +204,7 @@ export class Graby {
       html: extracted.isSuccess ? extracted.html : this.options.errorMessage,
       url: effectiveUrl.toString(),
       summary: extracted.summary,
-      language: extracted.language,
+      language: extracted.language ?? contentLanguageHeader(fetched.headers),
       date: extracted.date,
       authors: extracted.authors,
       image: extracted.image,
@@ -196,7 +215,7 @@ export class Graby {
       mimeType: fetched.mimeType,
       isNotParsed: !extracted.isSuccess,
     };
-    this.logger.info("graby.fetch.complete", { host: effectiveUrl.hostname, status: fetched.status, mimeType: fetched.mimeType, parsed: extracted.isSuccess });
+    this.logger.info("extractor.fetch.complete", { host: effectiveUrl.hostname, status: fetched.status, mimeType: fetched.mimeType, parsed: extracted.isSuccess });
     return content;
   }
 
@@ -210,12 +229,21 @@ export class Graby {
     return content;
   }
 
-  private extractorOptions(): ExtractorOptions {
+  private extractorOptions(): ContentExtractorOptions {
     return {
       contentLinks: this.options.contentLinks,
       rewriteRelativeUrls: this.options.rewriteRelativeUrls,
       imgNoReferrer: this.imgNoReferrer,
+      xssFilter: this.options.xssFilter,
     };
+  }
+
+  private isUrlAllowed(url: string): boolean {
+    const lower = url.toLowerCase();
+    if (this.options.allowedUrls.length) {
+      return this.options.allowedUrls.some((allow) => lower.includes(allow.toLowerCase()));
+    }
+    return !this.options.blockedUrls.some((block) => lower.includes(block.toLowerCase()));
   }
 
   private mimeAction(mimeType: string | null): ContentTypeAction | null {
@@ -227,32 +255,38 @@ export class Graby {
 
   private async fetchRemainingPages(first: ExtractedContent, firstUrl: string, cookies: string[]): Promise<ExtractedContent> {
     const visited = new Set([normalizeUrl(firstUrl).toString()]);
-    const pages = [first.html];
+    const extraPages: string[] = [];
     let next = first.nextPageUrl;
     let count = 1;
+    let interrupted = false;
 
-    while (next && count < this.options.maxPages) {
+    while (next) {
+      if (count >= this.options.maxPages) { interrupted = true; break; }
       const pageUrl = normalizeUrl(next);
-      if (visited.has(pageUrl.toString())) break;
+      if (visited.has(pageUrl.toString())) { interrupted = true; break; }
       visited.add(pageUrl.toString());
       const config = this.configBuilder.buildFromUrl(pageUrl);
       const fetched: FetchResult = await this.fetcher.fetch(pageUrl, config.http_header, { cookies });
       const effective = normalizeUrl(fetched.url);
-      if (visited.has(effective.toString()) && effective.toString() !== pageUrl.toString()) break;
-      visited.add(effective.toString());
+      if (this.mimeAction(fetched.mimeType)) { interrupted = true; break; }
       const extracted = this.extractor.process(fetched.body, effective, config, this.extractorOptions());
-      if (!extracted.isSuccess) break;
-      pages.push(extracted.html);
+      if (!extracted.isSuccess) { interrupted = true; break; }
+      extraPages.push(extracted.html);
       next = extracted.nextPageUrl;
       count += 1;
     }
 
+    // Mirror upstream: a broken walk discards collected extra pages and appends a notice to the first page.
+    const pages = interrupted
+      ? [first.html, '<p><em>This article appears to continue on subsequent pages which we could not extract.</em></p>']
+      : [first.html, ...extraPages];
+
     return {
       ...first,
       html: pages.join('<hr class="wallaby-page-break">'),
-      nextPageUrl: next,
+      nextPageUrl: interrupted ? next : null,
       summary: first.summary,
-      isSuccess: pages.some(Boolean),
+      isSuccess: Boolean(first.html),
     };
   }
 
@@ -264,7 +298,7 @@ export class Graby {
       !config.login_password_field
     ) return [];
 
-    this.logger.debug("graby.login.start", { host: url.hostname, extraFieldCount: config.login_extra_fields.length });
+    this.logger.debug("extractor.login.start", { host: url.hostname, extraFieldCount: config.login_extra_fields.length });
 
     const body = new URLSearchParams({
       [config.login_username_field]: credential.username,
@@ -293,7 +327,7 @@ export class Graby {
       { ...config.http_header, "content-type": "application/x-www-form-urlencoded" },
       { method: "POST", body: body.toString() },
     );
-    this.logger.info("graby.login.complete", { host: url.hostname, status: response.status, cookieCount: response.setCookies?.length ?? 0 });
+    this.logger.info("extractor.login.complete", { host: url.hostname, status: response.status, cookieCount: response.setCookies?.length ?? 0 });
     return response.setCookies ?? [];
   }
 
@@ -321,12 +355,19 @@ export class Graby {
   }
 }
 
-const noOpLogger: GrabyLogger = {
+const noOpLogger: ExtractorLogger = {
   debug() {},
   info() {},
   warn() {},
   error() {},
 };
+
+function contentLanguageHeader(headers: Record<string, string>): string | null {
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() === "content-language" && value.trim()) return value.trim();
+  }
+  return null;
+}
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[character]!);

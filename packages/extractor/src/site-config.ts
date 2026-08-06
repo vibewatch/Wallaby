@@ -35,7 +35,7 @@ const stringDirectives = new Set([
   "src_lazy_load_attr",
 ]);
 
-const acceptedWrapTags = new Set(["div", "section", "article", "header", "footer", "aside"]);
+const acceptedWrapTags = new Set(["blockquote", "p", "div"]);
 
 export function parseSiteConfig(source: string): SiteConfig {
   const config = new SiteConfig();

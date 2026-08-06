@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { ConfigBuilder, parseSiteConfig } from "../src";
 
-describe("Graby site config compatibility", () => {
+describe("Extractor site config compatibility", () => {
   it("parses repeated, boolean, header, replacement, conditional, and wrapping directives", () => {
     const config = parseSiteConfig(`
-      # a Graby-compatible site config
+      # an Extractor-compatible site config
       title: //h1
       body: //article
       body: //section[@class='appendix']
@@ -15,7 +15,7 @@ describe("Graby site config compatibility", () => {
       replace_string(<amp-img): <img
       single_page_link: //a[@rel='canonical']
       if_page_contains: //main
-      wrap_in(section): //div[@class='chapter']
+      wrap_in(div): //div[@class='chapter']
     `);
 
     expect(config.title).toEqual(["//h1"]);
@@ -26,7 +26,7 @@ describe("Graby site config compatibility", () => {
     expect(config.find_string).toEqual(["<amp-img"]);
     expect(config.replace_string).toEqual(["<img"]);
     expect(config.if_page_contains.single_page_link["//a[@rel='canonical']"]).toBe("//main");
-    expect(config.wrap_in.section).toBe("//div[@class='chapter']");
+    expect(config.wrap_in.div).toBe("//div[@class='chapter']");
   });
 
   it("uses exact host before one-level wildcard and appends global fallbacks", () => {

@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 
 import { localizeEntryImages } from "@/lib/article-images";
 import { db } from "@/lib/db";
-import { getGraby } from "@/lib/graby";
+import { getExtractor } from "@/lib/extractor";
 import { resolveEntryRedirect } from "@/lib/ignore-origin";
 import { findSiteCredential } from "@/lib/site-credentials";
 import { parseTags, stripHtml } from "@/lib/text";
@@ -57,7 +57,7 @@ export async function createEntryWithResult(userId: string, input: EntryInput) {
   let extractionError: string | null = null;
   try {
     const credential = input.content ? undefined : await findSiteCredential(userId, normalized.hostname);
-    extracted = await getGraby().fetchContent(normalized, input.content ?? undefined, credential);
+    extracted = await getExtractor().fetchContent(normalized, input.content ?? undefined, credential);
   } catch (error) {
     extractionError = error instanceof Error ? error.message : "Unknown extraction error";
   }
@@ -115,7 +115,7 @@ export async function reloadEntry(userId: string, entryId: string) {
   if (!entry) throw new Error("Entry not found");
   const url = new URL(entry.givenUrl);
   const credential = await findSiteCredential(userId, url.hostname);
-  const extracted = await getGraby().fetchContent(url, undefined, credential);
+  const extracted = await getExtractor().fetchContent(url, undefined, credential);
   const plainText = stripHtml(extracted.html);
   const resolvedUrl = await resolveEntryRedirect(userId, entry.url, extracted.url, entry.originUrl);
   await db.entry.update({

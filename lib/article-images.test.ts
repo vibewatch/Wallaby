@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { Fetcher } from "@wallaby/graby";
+import type { Fetcher } from "@wallaby/extractor";
 import sharp from "sharp";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 

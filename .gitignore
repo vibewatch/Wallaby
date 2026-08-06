@@ -1,0 +1,13 @@
+node_modules/
+.next/
+out/
+coverage/
+playwright-report/
+test-results/
+storage/
+.env
+.env.local
+*.log
+*.db
+*.db-journal
+!.env.example

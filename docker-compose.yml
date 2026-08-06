@@ -1,0 +1,25 @@
+services:
+  wallaby:
+    build:
+      context: .
+      # Set to "true" to bake Chromium into the image for WALLABY_BROWSER_RENDER.
+      args:
+        INSTALL_CHROMIUM: "false"
+    image: wallaby
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "file:/app/storage/wallaby.db"
+      AUTH_SECRET: "${AUTH_SECRET:?set AUTH_SECRET to a long random value}"
+      AUTH_TRUST_HOST: "true"
+      WALLABY_MEDIA_DIR: "/app/storage/media"
+      # Opt-in fetch fallbacks. Enable browser rendering only when the image was
+      # built with INSTALL_CHROMIUM=true.
+      WALLABY_BOT_PROFILES: "${WALLABY_BOT_PROFILES:-false}"
+      WALLABY_BROWSER_RENDER: "${WALLABY_BROWSER_RENDER:-false}"
+    volumes:
+      - wallaby-storage:/app/storage
+    restart: unless-stopped
+
+volumes:
+  wallaby-storage:

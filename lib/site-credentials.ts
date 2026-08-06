@@ -1,4 +1,4 @@
-import type { SiteCredential as GrabySiteCredential } from "@wallaby/graby";
+import type { SiteCredential as ExtractorSiteCredential } from "@wallaby/extractor";
 
 import { db } from "@/lib/db";
 import { decryptSecret, encryptSecret } from "@/lib/secret-box";
@@ -16,7 +16,7 @@ export function normalizeCredentialHost(input: string): string {
   return host;
 }
 
-export async function findSiteCredential(userId: string, rawHost: string): Promise<GrabySiteCredential | undefined> {
+export async function findSiteCredential(userId: string, rawHost: string): Promise<ExtractorSiteCredential | undefined> {
   const host = normalizeCredentialHost(rawHost);
   const labels = host.split(".");
   const wildcard = labels.length > 1 ? `.${labels.slice(1).join(".")}` : null;

@@ -6,10 +6,10 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "20mb",
     },
   },
-  transpilePackages: ["@wallaby/graby"],
+  transpilePackages: ["@wallaby/extractor"],
   outputFileTracingIncludes: {
     "/*": [
-      "./packages/graby-site-config/configs/**/*.txt",
+      "./packages/extractor-site-config/configs/**/*.txt",
       "./node_modules/@fontsource/unifont/files/unifont-latin-400-normal.woff2",
     ],
   },
