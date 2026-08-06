@@ -1,9 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import type { OAuthClient, Prisma } from "@prisma/client";
-import { compare } from "bcryptjs";
 
 import { db } from "@/lib/db";
+import { verifyPasswordCredentials } from "@/lib/password-auth";
 
 export const oauthGrantTypes = ["password", "refresh_token", "authorization_code", "token"] as const;
 export type OAuthGrantType = typeof oauthGrantTypes[number];
@@ -47,7 +47,7 @@ export async function handleOAuthTokenRequest(request: Request): Promise<Respons
     if (!oauthGrantTypes.includes(grantType)) throw oauthError("unsupported_grant_type", "The requested grant type is not supported");
     requireGrant(client, grantType);
     let payload: TokenPayload;
-    if (grantType === "password") payload = await passwordGrant(client, params);
+    if (grantType === "password") payload = await passwordGrant(client, params, request.headers);
     else if (grantType === "refresh_token") payload = await refreshTokenGrant(client, params);
     else if (grantType === "authorization_code") payload = await authorizationCodeGrant(client, params);
     else throw oauthError("unsupported_grant_type", "The implicit token grant is available only through /oauth/v2/auth");
@@ -141,11 +141,13 @@ export async function authenticateOAuthAccessToken(rawToken: string): Promise<st
   return token.userId;
 }
 
-async function passwordGrant(client: OAuthClient, params: URLSearchParams): Promise<TokenPayload> {
+async function passwordGrant(client: OAuthClient, params: URLSearchParams, headers: Headers): Promise<TokenPayload> {
   const username = requiredParameter(params, "username");
   const password = requiredParameter(params, "password");
-  const user = await db.user.findFirst({ where: { OR: [{ username }, { email: username.toLowerCase() }] }, select: { id: true, passwordHash: true, twoFactorMethod: true } });
-  if (!user?.passwordHash || !(await compare(password, user.passwordHash))) throw oauthError("invalid_grant", "The resource owner credentials are invalid");
+  const verification = await verifyPasswordCredentials(username, password, headers);
+  if (verification.status === "limited") throw oauthError("temporarily_unavailable", "Too many resource-owner authentication attempts", 429);
+  if (verification.status !== "authenticated") throw oauthError("invalid_grant", "The resource owner credentials are invalid");
+  const user = verification.user;
   if (user.twoFactorMethod !== "NONE") throw oauthError("invalid_grant", "Password grants are disabled for accounts with two-factor authentication; use the authorization-code grant");
   return db.$transaction((transaction) => issueTokenPair(transaction, client.id, user.id, normalizeScope(params.get("scope") ?? undefined)));
 }

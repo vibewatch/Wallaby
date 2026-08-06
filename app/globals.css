@@ -448,6 +448,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .job-status { width: 7px; height: 7px; background: var(--gold); border-radius: 50%; }
 .job-status.completed { background: var(--forest); }
 .job-status.failed { background: var(--danger); }
+.status-page { min-height: 100vh; padding: clamp(48px, 9vw, 120px) max(24px, calc((100vw - 760px) / 2)); display: grid; align-content: center; justify-items: start; background: var(--paper); }
+.status-page h1 { max-width: 720px; margin: 8px 0 14px; color: var(--ink); font: 500 clamp(2.5rem, 7vw, 5.2rem)/.96 var(--serif); letter-spacing: -.045em; }
+.status-page > p:not(.eyebrow) { max-width: 620px; margin: 0; color: var(--muted); font: 1rem/1.65 var(--serif); }
+.status-page small { margin-top: 12px; color: var(--quiet); font: .68rem ui-monospace, monospace; }
+.status-page > div { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 10px; }
+.status-page a, .status-page button { text-decoration: none; }
 
 @media (max-width: 980px) {
   .app-shell { grid-template-columns: 72px minmax(0, 1fr); }

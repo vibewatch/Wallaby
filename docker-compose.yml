@@ -1,24 +1,57 @@
+x-wallaby-environment: &wallaby-environment
+  DATABASE_URL: "file:/app/storage/wallaby.db"
+  AUTH_SECRET: "${AUTH_SECRET:?set AUTH_SECRET to a strong non-placeholder value}"
+  AUTH_TRUST_HOST: "true"
+  AUTH_URL: "${AUTH_URL:-http://localhost:3000}"
+  NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: "${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY:-}"
+  DEPLOYMENT_VERSION: "${DEPLOYMENT_VERSION:-}"
+  WALLABY_MEDIA_DIR: "/app/storage/media"
+  WALLABY_BOT_PROFILES: "${WALLABY_BOT_PROFILES:-false}"
+  WALLABY_BROWSER_RENDER: "${WALLABY_BROWSER_RENDER:-false}"
+  SITE_CREDENTIALS_KEY: "${SITE_CREDENTIALS_KEY:-}"
+  TWO_FACTOR_KEY: "${TWO_FACTOR_KEY:-}"
+  POCKET_TOKEN_KEY: "${POCKET_TOKEN_KEY:-}"
+  TWO_FACTOR_SMTP_HOST: "${TWO_FACTOR_SMTP_HOST:-}"
+  TWO_FACTOR_SMTP_PORT: "${TWO_FACTOR_SMTP_PORT:-}"
+  TWO_FACTOR_SMTP_SECURITY: "${TWO_FACTOR_SMTP_SECURITY:-}"
+  TWO_FACTOR_SMTP_USER: "${TWO_FACTOR_SMTP_USER:-}"
+  TWO_FACTOR_SMTP_PASSWORD: "${TWO_FACTOR_SMTP_PASSWORD:-}"
+  TWO_FACTOR_EMAIL_FROM: "${TWO_FACTOR_EMAIL_FROM:-}"
+
 services:
   wallaby:
     build:
       context: .
       # Set to "true" to bake Chromium into the image for WALLABY_BROWSER_RENDER.
       args:
-        INSTALL_CHROMIUM: "false"
+        INSTALL_CHROMIUM: "${INSTALL_CHROMIUM:-false}"
     image: wallaby
     ports:
       - "3000:3000"
-    environment:
-      DATABASE_URL: "file:/app/storage/wallaby.db"
-      AUTH_SECRET: "${AUTH_SECRET:?set AUTH_SECRET to a long random value}"
-      AUTH_TRUST_HOST: "true"
-      WALLABY_MEDIA_DIR: "/app/storage/media"
-      # Opt-in fetch fallbacks. Enable browser rendering only when the image was
-      # built with INSTALL_CHROMIUM=true.
-      WALLABY_BOT_PROFILES: "${WALLABY_BOT_PROFILES:-false}"
-      WALLABY_BROWSER_RENDER: "${WALLABY_BROWSER_RENDER:-false}"
+    environment: *wallaby-environment
     volumes:
       - wallaby-storage:/app/storage
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  wallaby-worker:
+    image: wallaby
+    command: ["npm", "run", "import:worker"]
+    environment: *wallaby-environment
+    volumes:
+      - wallaby-storage:/app/storage
+    depends_on:
+      wallaby:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
     restart: unless-stopped
 
 volumes:

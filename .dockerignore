@@ -3,7 +3,9 @@ node_modules
 out
 coverage
 playwright-report
+playwright.config.ts
 test-results
+artifacts
 storage
 .git
 .env

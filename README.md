@@ -44,13 +44,15 @@ npm run verify
 npm audit --audit-level=moderate
 ```
 
+Before a production release, run the complete isolated browser and operational gate with `npm run release`. Deployment topology, secret generation, TLS, health checks, backup/restore, upgrades, and external-provider smoke boundaries are documented in [Production operations](docs/PRODUCTION.md).
+
 Apply every saved tagging rule to an existing user's library from the command line with:
 
 ```bash
 npm run tag:all -- demo
 ```
 
-Imports are stored before article processing begins. In production, run one or more worker processes beside the web application:
+Imports are stored before article processing begins. In the supported SQLite production profile, run one worker process beside the web application:
 
 ```bash
 npm run import:worker

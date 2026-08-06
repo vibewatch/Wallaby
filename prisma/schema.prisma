@@ -453,3 +453,13 @@ model SignInGrant {
 
   @@index([userId, expiresAt])
 }
+
+model AuthThrottle {
+  key             String   @id
+  failures        Int      @default(0)
+  windowStartedAt DateTime
+  blockedUntil    DateTime?
+  updatedAt       DateTime @updatedAt
+
+  @@index([updatedAt])
+}

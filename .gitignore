@@ -4,10 +4,12 @@ out/
 coverage/
 playwright-report/
 test-results/
+.tmp/
 storage/
 .env
 .env.local
 *.log
 *.db
 *.db-journal
+tsconfig.tsbuildinfo
 !.env.example

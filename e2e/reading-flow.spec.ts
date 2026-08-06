@@ -10,6 +10,7 @@ import { PrismaClient } from "@prisma/client";
 import sharp from "sharp";
 
 import { getMediaRoot, resolveMediaPath } from "../lib/article-images";
+import { identityThrottleKey } from "../lib/auth-throttle";
 import { generateTotp } from "../lib/two-factor";
 
 async function signIn(page: Page, username = "demo", password = "wallaby-demo") {
@@ -81,6 +82,92 @@ test("protected routes redirect to a usable responsive sign-in page", async ({ p
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test("production health probes and browser security headers are active", async ({ page }) => {
+  const [live, ready, signInResponse, apiInfo] = await Promise.all([
+    page.request.get("/api/health/live"),
+    page.request.get("/api/health/ready"),
+    page.request.get("/auth/signin"),
+    page.request.get("/api/info"),
+  ]);
+  expect(live.status()).toBe(200);
+  expect(await live.json()).toMatchObject({ status: "ok", service: "wallaby" });
+  expect(live.headers()["set-cookie"]).toBeUndefined();
+  expect(ready.status()).toBe(200);
+  expect(await ready.json()).toMatchObject({ status: "ready", checks: { database: "ok" } });
+  expect(ready.headers()["set-cookie"]).toBeUndefined();
+  expect(signInResponse.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
+  expect(signInResponse.headers()["x-frame-options"]).toBe("DENY");
+  expect(signInResponse.headers()["x-content-type-options"]).toBe("nosniff");
+  expect(signInResponse.headers()["x-powered-by"]).toBeUndefined();
+  expect(apiInfo.headers()["cache-control"]).toContain("no-store");
+});
+
+test("core surfaces stay accessible, named, and free of browser diagnostics", async ({ page }) => {
+  const browserDiagnostics: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error") browserDiagnostics.push(`console: ${message.text()}`); });
+  page.on("pageerror", (error) => browserDiagnostics.push(`pageerror: ${error.message}`));
+  await signIn(page);
+  for (const path of ["/entries?view=all", "/entries/help", "/entries/import", "/entries/settings", "/entries/developer", "/entries/admin"]) {
+    await page.goto(path);
+    await expect(page.locator("main")).toBeVisible();
+    await expect(page).not.toHaveTitle("");
+    await expectNoHorizontalOverflow(page);
+    const audit = await page.evaluate(() => {
+      const ids = [...document.querySelectorAll<HTMLElement>("[id]")].map((element) => element.id);
+      const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
+      const unnamedControls = [...document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input:not([type=hidden]), select, textarea")]
+        .filter((control) => !control.name)
+        .map((control) => control.outerHTML.slice(0, 120));
+      const imagesWithoutAlt = [...document.querySelectorAll("img:not([alt])")].map((image) => image.outerHTML.slice(0, 120));
+      return { duplicates, unnamedControls, imagesWithoutAlt };
+    });
+    expect(audit).toEqual({ duplicates: [], unnamedControls: [], imagesWithoutAlt: [] });
+  }
+  expect(browserDiagnostics).toEqual([]);
+  await page.goto("/this-route-does-not-exist");
+  await expect(page.getByRole("heading", { name: "This page is no longer on the shelf." })).toBeVisible();
+});
+
+test("repeated password failures persistently throttle sign-in", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chrome", "Persistent throttle coverage only needs one browser profile");
+  const prisma = new PrismaClient();
+  const unique = Date.now();
+  const username = `throttle-${unique}`;
+  const password = `Throttle-${unique}!`;
+  const user = await prisma.user.create({ data: {
+    username,
+    name: "Throttle Test",
+    email: `${username}@example.test`,
+    passwordHash: await hash(password, 12),
+    preference: { create: {} },
+  } });
+  try {
+    await prisma.authThrottle.create({ data: {
+      key: identityThrottleKey(username),
+      failures: 7,
+      windowStartedAt: new Date(),
+    } });
+    await page.goto("/auth/signin");
+    await page.getByLabel("Username or email").fill(username);
+    await page.getByLabel("Password").fill("incorrect-password");
+    let completed = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/auth/signin");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await completed;
+    await expect(page.locator(".form-error[role=alert]")).toContainText("Too many sign-in attempts");
+    await page.getByLabel("Username or email").fill(username);
+    await page.getByLabel("Password").fill(password);
+    completed = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/auth/signin");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await completed;
+    await expect(page.locator(".form-error[role=alert]")).toContainText("Too many sign-in attempts");
+    await expect(page).toHaveURL(/\/auth\/signin/);
+  } finally {
+    await prisma.authThrottle.deleteMany();
+    await prisma.user.deleteMany({ where: { id: user.id } });
+    await prisma.$disconnect();
+  }
 });
 
 test("quick-start help is reachable and responsive", async ({ page }) => {
@@ -750,7 +837,13 @@ test("wallabag-style rules tag new and existing entries", async ({ page }, testI
   await taggingForm.getByRole("button", { name: "Add rule" }).click();
   await expect(page.locator(".rule-list article", { hasText: rule })).toBeVisible();
 
+  const applyRulesResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname === "/entries/settings",
+  );
   await page.getByRole("button", { name: "Apply all rules to existing entries" }).click();
+  const applyRulesResponse = await applyRulesResponsePromise;
+  expect(applyRulesResponse.ok()).toBe(true);
+  await expect(page.getByRole("navigation", { name: "Tags" }).getByRole("link", { name: /automatic-e2e/ })).toContainText("1");
   const existingAfterApply = await page.request.get(`/api/entries/${existingEntry.id}`);
   expect(existingAfterApply.status()).toBe(200);
   const retaggedEntry = await existingAfterApply.json() as { tags: { label: string }[] };
@@ -901,7 +994,13 @@ test("bulk entry and tag actions share one ownership-checked workflow", async ({
   await page.goto(`/entries?view=all&q=${unique}`);
   for (const title of titles) await page.getByLabel(`Select ${title}`).check();
   await page.getByLabel("Bulk action").selectOption("toggle-read");
+  const toggleReadResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname === "/entries",
+  );
   await page.locator(".bulk-toolbar").getByRole("button", { name: "Apply" }).click();
+  const toggleReadResponse = await toggleReadResponsePromise;
+  expect(toggleReadResponse.ok()).toBe(true);
+  await expect(page.locator(".entry-list").getByRole("button", { name: "Mark unread" })).toHaveCount(entries.length);
   for (const entry of entries) {
     const response = await page.request.get(`/api/entries/${entry.id}`);
     expect((await response.json() as { is_archived: number }).is_archived).toBe(1);
@@ -910,7 +1009,13 @@ test("bulk entry and tag actions share one ownership-checked workflow", async ({
   for (const title of titles) await page.getByLabel(`Select ${title}`).check();
   await page.getByLabel("Bulk action").selectOption("tag");
   await page.getByLabel("Bulk tags").fill(`bulk-${unique}, -not-present`);
+  const tagResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname === "/entries",
+  );
   await page.locator(".bulk-toolbar").getByRole("button", { name: "Apply" }).click();
+  const tagResponse = await tagResponsePromise;
+  expect(tagResponse.ok()).toBe(true);
+  await expect(page.locator(".entry-list").getByRole("link", { name: `#bulk-${unique}`, exact: true })).toHaveCount(entries.length);
   for (const entry of entries) {
     const response = await page.request.get(`/api/entries/${entry.id}`);
     const body = await response.json() as { tags: { label: string }[] };

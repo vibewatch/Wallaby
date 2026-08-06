@@ -1,15 +1,15 @@
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import { compare } from "bcryptjs";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
+import { verifyPasswordCredentials } from "@/lib/password-auth";
 import { consumeSignInGrant } from "@/lib/two-factor";
 
 const credentialsSchema = z.object({
-  username: z.string().trim().min(1),
-  password: z.string().min(1),
+  username: z.string().trim().min(1).max(320),
+  password: z.string().min(1).max(200),
 });
 const grantSchema = z.object({ grant: z.string().min(32).max(128) });
 
@@ -25,7 +25,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: "Password", type: "password" },
         grant: { label: "One-time sign-in grant", type: "text" },
       },
-      async authorize(rawCredentials) {
+      async authorize(rawCredentials, request) {
         const parsedGrant = grantSchema.safeParse(rawCredentials);
         if (parsedGrant.success) {
           const user = await consumeSignInGrant(parsedGrant.data.grant);
@@ -35,11 +35,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const parsed = credentialsSchema.safeParse(rawCredentials);
         if (!parsed.success) return null;
 
-        const { username, password } = parsed.data;
-        const user = await db.user.findFirst({
-          where: { OR: [{ username }, { email: username.toLowerCase() }] },
-        });
-        if (!user?.passwordHash || user.twoFactorMethod !== "NONE" || !(await compare(password, user.passwordHash))) return null;
+        const verification = await verifyPasswordCredentials(parsed.data.username, parsed.data.password, request.headers);
+        if (verification.status !== "authenticated" || verification.user.twoFactorMethod !== "NONE") return null;
+        const user = verification.user;
         return { id: user.id, name: user.name ?? user.username, email: user.email, role: user.role, sessionVersion: user.sessionVersion };
       },
     }),
@@ -68,6 +66,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.role = token.role as "USER" | "ADMIN";
       }
       return session;
+    },
+  },
+  logger: {
+    error(error) {
+      const errorType = "type" in error && typeof error.type === "string" ? error.type : error.name;
+      const expected = errorType === "CredentialsSignin";
+      const payload = {
+        level: expected ? "warn" : "error",
+        event: expected ? "auth.credentials_rejected" : "auth.error",
+        errorType,
+        message: expected ? "Credentials were rejected" : "Authentication failed unexpectedly",
+        timestamp: new Date().toISOString(),
+      };
+      if (expected) console.warn(JSON.stringify(payload));
+      else console.error(JSON.stringify(payload));
     },
   },
 });

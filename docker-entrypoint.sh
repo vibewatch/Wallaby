@@ -1,8 +1,12 @@
 #!/bin/sh
 set -e
+umask 077
 
-# Apply pending Prisma migrations against the configured DATABASE_URL, then hand
-# off to the container command (web server by default, see Dockerfile CMD).
+# Reject unsafe configuration before touching persistent storage, then apply
+# pending migrations and hand off to the requested process.
+echo "Wallaby: validating production configuration..."
+npm run config:validate
+
 echo "Wallaby: applying database migrations..."
 npx prisma migrate deploy
 

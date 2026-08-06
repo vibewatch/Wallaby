@@ -24,6 +24,7 @@ import { sanitizeReaderCss } from "@/lib/preferences";
 import { applyTaggingRulesToAll, parseTaggingRuleImport, validateTaggingRule } from "@/lib/rules";
 import { isCredentialEncryptionConfigured } from "@/lib/secret-box";
 import { upsertSiteCredential } from "@/lib/site-credentials";
+import { verifyPasswordCredentials } from "@/lib/password-auth";
 import { cancelLoginChallenge, confirmEmailSetup, confirmTotpSetup, createEmailSetup, createLoginChallenge, createTotpSetup, disableTwoFactor as disableTwoFactorForUser, isTrustedDevice, issueSignInGrant, isTwoFactorEmailConfigured, isTwoFactorEncryptionConfigured, registerTrustedDevice, regenerateRecoveryCodes, revokeTrustedDevices, TRUSTED_DEVICE_COOKIE, TWO_FACTOR_CHALLENGE_COOKIE, verifyLoginChallenge } from "@/lib/two-factor";
 
 export type SignInState = { error?: string };
@@ -39,11 +40,13 @@ export type TwoFactorActionState = {
 };
 
 export async function authenticate(_state: SignInState, formData: FormData): Promise<SignInState> {
-  const parsed = z.object({ username: z.string().trim().min(1), password: z.string().min(1).max(200), callbackUrl: z.string().optional() }).safeParse(Object.fromEntries(formData));
+  const parsed = z.object({ username: z.string().trim().min(1).max(320), password: z.string().min(1).max(200), callbackUrl: z.string().optional() }).safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "The username or password is incorrect." };
   const redirectTo = safeSignInRedirect(parsed.data.callbackUrl);
-  const account = await db.user.findFirst({ where: { OR: [{ username: parsed.data.username }, { email: parsed.data.username.toLowerCase() }] } });
-  if (!account?.passwordHash || !(await compare(parsed.data.password, account.passwordHash))) return { error: "The username or password is incorrect." };
+  const verification = await verifyPasswordCredentials(parsed.data.username, parsed.data.password, await headers());
+  if (verification.status === "limited") return { error: "Too many sign-in attempts. Wait 15 minutes and try again." };
+  if (verification.status !== "authenticated") return { error: "The username or password is incorrect." };
+  const account = verification.user;
   const cookieStore = await cookies();
   if (account.twoFactorMethod === "TOTP" || account.twoFactorMethod === "EMAIL") {
     const trustedToken = cookieStore.get(TRUSTED_DEVICE_COOKIE)?.value;
@@ -68,9 +71,9 @@ export async function authenticate(_state: SignInState, formData: FormData): Pro
     redirect("/auth/two-factor");
   }
   try {
+    const grant = await issueSignInGrant(account.id);
     await signIn("credentials", {
-      username: parsed.data.username,
-      password: parsed.data.password,
+      grant,
       redirectTo,
     });
     return {};

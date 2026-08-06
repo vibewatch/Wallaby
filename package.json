@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "description": "A modern, self-hosted wallabag-compatible read-it-later application.",
+  "engines": {
+    "node": ">=20.9",
+    "npm": ">=10"
+  },
   "workspaces": [
     "packages/*"
   ],
@@ -15,6 +19,9 @@
     "test": "vitest run",
     "test:site-configs": "tsx scripts/verify-site-configs.ts",
     "test:e2e": "playwright test",
+    "test:container": "tsx scripts/verify-container.ts",
+    "test:production-config": "vitest run lib/production-config.test.ts",
+    "config:validate": "tsx scripts/validate-production.ts",
     "images:cleanup": "tsx scripts/cleanup-images.ts",
     "import:worker": "tsx scripts/import-worker.ts",
     "import:worker:once": "tsx scripts/import-worker.ts --once",
@@ -26,7 +33,9 @@
     "oauth:create-client": "tsx scripts/create-oauth-client.ts",
     "tag:all": "tsx scripts/tag-all.ts",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run test:site-configs && npm run build",
+    "release": "npm run verify && npm run test:e2e && npm audit --omit=dev --audit-level=moderate && npm run db:validate && npm run test:container",
     "db:generate": "prisma generate",
+    "db:validate": "prisma validate",
     "db:migrate": "prisma migrate deploy",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
@@ -46,11 +55,14 @@
     "next": "16.3.0",
     "next-auth": "5.0.0-beta.32",
     "pdf-lib": "^1.17.1",
+    "playwright": "1.62.1",
+    "prisma": "6.19.3",
     "qrcode": "1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "safe-regex2": "^5.1.1",
     "sharp": "0.35.3",
+    "tsx": "4.20.6",
     "zod": "3.25.76"
   },
   "devDependencies": {
@@ -62,8 +74,6 @@
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.1",
     "eslint-config-next": "16.3.0",
-    "prisma": "6.19.3",
-    "tsx": "4.20.6",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }
