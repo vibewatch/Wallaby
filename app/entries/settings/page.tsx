@@ -40,6 +40,7 @@ export default async function SettingsPage() {
           <label><span>Entries per page</span><input type="number" name="itemsPerPage" min="5" max="100" defaultValue={preference.itemsPerPage} /></label>
           <label><span>Reading speed (words/min)</span><input type="number" name="readingSpeed" min="50" max="1000" defaultValue={preference.readingSpeed} /></label>
           <label><span>Language</span><input name="language" defaultValue={preference.language} /></label>
+          <label><span>Colour theme</span><select name="theme" defaultValue={preference.theme}><option value="auto">Match system</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
           <label><span>Reader typeface</span><select name="font" defaultValue={preference.font}><option value="serif">Serif</option><option value="sans">Sans serif</option></select></label>
           <label><span>Text size</span><input type="number" name="fontSize" min="0.75" max="2" step="0.05" defaultValue={preference.fontSize} /></label>
           <label><span>Line height</span><input type="number" name="lineHeight" min="1.2" max="2.5" step="0.05" defaultValue={preference.lineHeight} /></label>

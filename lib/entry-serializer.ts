@@ -32,6 +32,8 @@ export function serializeEntry(entry: EntryWithRelations, options: { detail?: "f
     http_status: entry.httpStatus === null ? null : String(entry.httpStatus),
     headers: entry.headers,
     is_not_parsed: Number(entry.isNotParsed),
+    reading_progress: entry.readingProgress,
+    reading_progress_at: entry.readingProgressAt?.toISOString() ?? null,
     is_public: Boolean(entry.shareToken),
     public_url: entry.shareToken ? `/share/${entry.shareToken}` : null,
     user_id: entry.user?.id ?? entry.userId,

@@ -3,11 +3,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { AddEntry } from "@/components/add-entry";
+import { ActionForm } from "@/components/action-form";
 import { EntryCard } from "@/components/entry-card";
 import { bulkUpdateEntries } from "@/lib/actions";
 import { requireUser } from "@/lib/auth-user";
 import { db } from "@/lib/db";
 import { advancedFilterNames, entryWhere, parseEntryFilters } from "@/lib/entry-filters";
+import { findEntryPage, rankedEntryIds, tokenizeSearch } from "@/lib/search";
 
 export const metadata: Metadata = { title: "Library" };
 
@@ -37,11 +39,14 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
   ]);
   const pageSize = Math.min(preference?.itemsPerPage ?? 20, 100);
 
-  const where = entryWhere(user.id, filters, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null);
+  // Resolving the text query first lets the index rank the candidates; a null
+  // result means there is no index and the predicate falls back to substrings.
+  const ranked = query ? await rankedEntryIds(user.id, query) : null;
+  const where = entryWhere(user.id, filters, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null, ranked);
+  const highlight = query ? tokenizeSearch(query) : null;
 
-  const [entries, total, selectedTag, languageRows] = await Promise.all([
-    db.entry.findMany({ where, include: { tags: true }, orderBy: { createdAt: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
-    db.entry.count({ where }),
+  const [{ entries, total }, selectedTag, languageRows] = await Promise.all([
+    findEntryPage({ where, ranked, page, pageSize }),
     tag ? db.tag.findFirst({ where: { userId: user.id, slug: tag } }) : null,
     db.entry.findMany({ where: { userId: user.id, language: { not: null } }, distinct: ["language"], select: { language: true }, orderBy: { language: "asc" } }),
   ]);
@@ -61,11 +66,12 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
       </header>
       <form className="search-bar">
         <Search size={18} />
-        <input name="q" defaultValue={query} placeholder="Search titles, content, domains, and tags" aria-label="Search your library" />
+        <input name="q" defaultValue={query} placeholder={'Search titles, content, domains, and tags — "quote a phrase"'} aria-label="Search your library" />
         <input type="hidden" name="view" value={view} />
         {tag ? <input type="hidden" name="tag" value={tag} /> : null}
         {sourceEntryId ? <input type="hidden" name="entry" value={sourceEntryId} /> : null}
         {advancedFilterNames.map((name) => stringValue(params[name]) ? <input key={name} type="hidden" name={name} value={stringValue(params[name])} /> : null)}
+        <kbd>/</kbd>
         <kbd>Enter</kbd>
       </form>
       <details className="advanced-filters" open={hasAdvancedFilters}>
@@ -95,8 +101,8 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
           <div className="advanced-filter-actions"><Link href={clearFilterUrl(view, tag, sourceEntryId)}>Clear filters</Link><button className="secondary-button">Apply filters</button></div>
         </form>
       </details>
-      <div className="results-line"><span>{total} {total === 1 ? "entry" : "entries"}</span><span>Newest first</span>{view !== "same-domain" ? <Link href={randomUrl(view, tag)}><Shuffle size={13} /> Read a random entry</Link> : null}<Link href={exportUrl(params)}><Download size={13} /> Export results</Link></div>
-      {entries.length ? <form action={bulkUpdateEntries} id="bulk-entries" className="bulk-toolbar">
+      <div className="results-line"><span>{total} {total === 1 ? "entry" : "entries"}</span><span>{ranked ? "Most relevant first" : "Newest first"}</span>{view !== "same-domain" ? <Link href={randomUrl(view, tag)}><Shuffle size={13} /> Read a random entry</Link> : null}<Link href={exportUrl(params)}><Download size={13} /> Export results</Link></div>
+      {entries.length ? <ActionForm action={bulkUpdateEntries} id="bulk-entries" className="bulk-toolbar">
         <label><span>Selected entries</span><select name="action" defaultValue="toggle-read" aria-label="Bulk action">
           <option value="toggle-read">Toggle read / unread</option>
           <option value="toggle-star">Toggle star</option>
@@ -105,12 +111,13 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
         </select></label>
         <input name="tags" placeholder="Tags: research, -later" aria-label="Bulk tags" />
         <button className="secondary-button">Apply</button>
-      </form> : null}
+      </ActionForm> : null}
       <section className="entry-list" aria-live="polite">
         {entries.map((entry) => <EntryCard
           key={entry.id}
           entry={entry}
           selectionFormId="bulk-entries"
+          highlight={highlight}
           compact={preference?.listMode ?? false}
           displayThumbnail={preference?.displayThumbnails ?? true}
           readingSpeed={preference?.readingSpeed ?? 200}

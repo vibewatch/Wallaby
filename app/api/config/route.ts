@@ -4,6 +4,7 @@ import { z } from "zod";
 import { authenticateApiRequest, unauthorized } from "@/lib/api-auth";
 import { db } from "@/lib/db";
 import { sanitizeReaderCss } from "@/lib/preferences";
+import { themes } from "@/lib/theme";
 
 export async function GET(request: Request) {
   const userId = await authenticateApiRequest(request);
@@ -24,6 +25,7 @@ export async function PATCH(request: Request) {
     action_mark_as_read: flag.optional(),
     list_mode: flag.optional(),
     display_thumbnails: flag.optional(),
+    theme: z.enum(themes).optional(),
     font: z.enum(["sans", "serif"]).optional(),
     fontsize: z.number().min(0.75).max(2).optional(),
     line_height: z.number().min(1.2).max(2.5).optional(),
@@ -42,6 +44,7 @@ export async function PATCH(request: Request) {
     actionMarkAsRead: parsed.data.action_mark_as_read,
     listMode: parsed.data.list_mode,
     displayThumbnails: parsed.data.display_thumbnails,
+    theme: parsed.data.theme,
     font: parsed.data.font,
     fontSize: parsed.data.fontsize,
     lineHeight: parsed.data.line_height,
@@ -64,6 +67,7 @@ function serializeConfig(config: UserPreference) {
     action_mark_as_read: Number(config.actionMarkAsRead),
     list_mode: Number(config.listMode),
     display_thumbnails: Number(config.displayThumbnails),
+    theme: config.theme,
     font: config.font,
     fontsize: config.fontSize,
     line_height: config.lineHeight,

@@ -115,6 +115,8 @@ model Entry {
   extractionError String?
   shareToken     String?  @unique
   sharedAt       DateTime?
+  readingProgress   Float     @default(0)
+  readingProgressAt DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -171,6 +173,7 @@ model UserPreference {
   actionMarkAsRead  Boolean @default(false)
   listMode          Boolean @default(false)
   displayThumbnails Boolean @default(true)
+  theme             String  @default("auto")
   font              String  @default("sans")
   fontSize          Float   @default(1)
   lineHeight        Float   @default(1.75)

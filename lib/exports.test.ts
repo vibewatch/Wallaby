@@ -79,7 +79,10 @@ describe("library exports", () => {
     expect(() => new JSDOM(chapter, { contentType: "application/xhtml+xml" })).not.toThrow();
   });
 
-  it("builds a parseable, paginated multilingual PDF", async () => {
+  // Embedding CJK, Arabic, and Cyrillic faces and paginating them takes a few
+  // seconds on its own, which leaves no room under the 5s default once the rest
+  // of the suite is competing for cores.
+  it("builds a parseable, paginated multilingual PDF", { timeout: 30_000 }, async () => {
     const multilingual = {
       ...entry,
       title: "Portable 中文 العربية русский",

@@ -1259,6 +1259,66 @@ test("selected article text becomes a persisted, rendered highlight", async ({ p
   }
 });
 
+test("library search ranks matches, highlights them, and agrees with the export", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chrome", "Ranked search needs one browser profile");
+  await signIn(page);
+  const unique = Date.now();
+  const token = `serendipity${unique}`;
+  const titled = `A ${token} headline`;
+  const bodied = `An unrelated saved page ${unique}`;
+  const phrased = `Quiet notes ${unique}`;
+  const tagged = `Nothing relevant ${unique}`;
+  const save = async (path: string, title: string, body: string, tags?: string[]) => {
+    const response = await page.request.post("/api/entries", { data: {
+      url: `https://search-${unique}.example/${path}`,
+      title,
+      tags,
+      content: `<article><p>${body}</p></article>`,
+    } });
+    expect(response.status()).toBe(201);
+    return response.json() as Promise<{ id: string }>;
+  };
+  const entries = [
+    await save("titled", titled, `An essay about durability and calm attention. ${"Padding sentence. ".repeat(20)}`),
+    await save("bodied", bodied, `Some filler up front. ${token} copies of the web are worth keeping. ${"More filler. ".repeat(20)}`),
+    await save("phrased", phrased, `You can read it later without a network. ${"Padding sentence. ".repeat(20)}`),
+    await save("tagged", tagged, `Nothing relevant here either. ${"Padding sentence. ".repeat(20)}`, [token]),
+  ];
+
+  try {
+    await page.goto(`/entries?view=all&q=${token}`);
+    await expect(page.locator(".results-line")).toContainText("Most relevant first");
+    // The title match outranks the same word buried in body text.
+    await expect(page.locator(".entry-list .entry-title h2")).toHaveText([titled, bodied, tagged]);
+    // Only the body match needs a snippet; the others already show their term.
+    const bodiedCard = page.locator(".entry-card", { has: page.getByRole("heading", { name: bodied }) });
+    await expect(bodiedCard.locator(".entry-summary mark")).toHaveText(token);
+    await expect(bodiedCard.locator(".entry-summary")).toContainText("copies of the web");
+
+    // A prefix finds the word before it is finished; a second word narrows.
+    await page.goto(`/entries?view=all&q=${token.slice(0, 8)}`);
+    await expect(page.locator(".entry-list .entry-card")).toHaveCount(3);
+    await page.goto(`/entries?view=all&q=${encodeURIComponent(`${token} headline`)}`);
+    await expect(page.locator(".entry-list .entry-title h2")).toHaveText([titled]);
+
+    // A quoted phrase is exact; the same words loose are not.
+    await page.goto(`/entries?view=all&q=${encodeURIComponent(`"read it later" ${unique}`)}`);
+    await expect(page.locator(".entry-list .entry-title h2")).toHaveText([phrased]);
+
+    // Index syntax in the box is read as words, so it narrows rather than widens.
+    await page.goto(`/entries?view=all&q=${encodeURIComponent(`${token} OR unmatchableword`)}`);
+    await expect(page.getByRole("heading", { name: "No matching entries" })).toBeVisible();
+
+    await page.goto(`/entries?view=all&q=${token}`);
+    const exportHref = await page.getByRole("link", { name: "Export results" }).getAttribute("href");
+    const exported = await (await page.request.get(exportHref!)).json() as { title: string }[];
+    expect(exported.map(({ title }) => title).sort()).toEqual([bodied, tagged, titled].sort());
+  } finally {
+    for (const entry of entries) await page.request.delete(`/api/entries/${entry.id}`);
+    await page.request.delete(`/api/tags?label=${encodeURIComponent(token)}`);
+  }
+});
+
 test("private feeds support tag pagination, limits, and RSS", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chrome", "Feed configuration needs one browser profile");
   await signIn(page);

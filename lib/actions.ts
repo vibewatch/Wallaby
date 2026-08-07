@@ -24,6 +24,8 @@ import { sanitizeReaderCss } from "@/lib/preferences";
 import { applyTaggingRulesToAll, parseTaggingRuleImport, validateTaggingRule } from "@/lib/rules";
 import { isCredentialEncryptionConfigured } from "@/lib/secret-box";
 import { upsertSiteCredential } from "@/lib/site-credentials";
+import { parseTheme, THEME_COOKIE, type Theme, themes } from "@/lib/theme";
+import { type ActionResult, parseUndoToken, pluralizeEntries, undoFor } from "@/lib/toast";
 import { verifyPasswordCredentials } from "@/lib/password-auth";
 import { cancelLoginChallenge, confirmEmailSetup, confirmTotpSetup, createEmailSetup, createLoginChallenge, createTotpSetup, disableTwoFactor as disableTwoFactorForUser, isTrustedDevice, issueSignInGrant, isTwoFactorEmailConfigured, isTwoFactorEncryptionConfigured, registerTrustedDevice, regenerateRecoveryCodes, revokeTrustedDevices, TRUSTED_DEVICE_COOKIE, TWO_FACTOR_CHALLENGE_COOKIE, verifyLoginChallenge } from "@/lib/two-factor";
 
@@ -130,28 +132,36 @@ export async function addEntry(formData: FormData) {
   redirect(`/entries/${entry.id}`);
 }
 
-export async function toggleArchived(entryId: string) {
+export async function toggleArchived(entryId: string): Promise<ActionResult> {
   const user = await requireUser();
   const entry = await db.entry.findFirst({ where: { id: entryId, userId: user.id }, select: { archived: true } });
-  if (!entry) return;
+  if (!entry) return { message: "That entry is no longer in your library", tone: "danger" };
   await db.entry.update({
     where: { id: entryId },
     data: { archived: !entry.archived, archivedAt: entry.archived ? null : new Date() },
   });
   revalidatePath("/entries");
   revalidatePath(`/entries/${entryId}`);
+  return {
+    message: entry.archived ? "Moved back to unread" : "Archived",
+    undo: undoFor("archive", [{ id: entryId, value: entry.archived }]),
+  };
 }
 
-export async function toggleStarred(entryId: string) {
+export async function toggleStarred(entryId: string): Promise<ActionResult> {
   const user = await requireUser();
   const entry = await db.entry.findFirst({ where: { id: entryId, userId: user.id }, select: { starred: true } });
-  if (!entry) return;
+  if (!entry) return { message: "That entry is no longer in your library", tone: "danger" };
   await db.entry.update({
     where: { id: entryId },
     data: { starred: !entry.starred, starredAt: entry.starred ? null : new Date() },
   });
   revalidatePath("/entries");
   revalidatePath(`/entries/${entryId}`);
+  return {
+    message: entry.starred ? "Star removed" : "Starred",
+    undo: undoFor("star", [{ id: entryId, value: entry.starred }]),
+  };
 }
 
 export async function updateEntryTitle(entryId: string, formData: FormData) {
@@ -163,13 +173,77 @@ export async function updateEntryTitle(entryId: string, formData: FormData) {
   revalidatePath(`/entries/${entryId}`);
 }
 
-export async function bulkUpdateEntries(formData: FormData) {
+/** Bulk actions whose effect is an exact state flip, and so can be reversed. */
+const undoableBulkActions: Partial<Record<(typeof bulkEntryActions)[number], "archive" | "star">> = {
+  "toggle-read": "archive",
+  archive: "archive",
+  unarchive: "archive",
+  "toggle-star": "star",
+  star: "star",
+  unstar: "star",
+};
+
+export async function bulkUpdateEntries(_state: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const action = z.enum(bulkEntryActions).parse(formData.get("action"));
   const ids = formData.getAll("ids").map(String);
   const tags = String(formData.get("tags") ?? "");
-  await applyBulkEntryAction(user.id, ids, action, tags);
+
+  // Read the prior state before mutating, so undo restores each entry to where
+  // it actually was rather than to a single shared value.
+  const kind = undoableBulkActions[action];
+  const before = kind
+    ? await db.entry.findMany({ where: { userId: user.id, id: { in: ids } }, select: { id: true, archived: true, starred: true } })
+    : [];
+
+  const count = await applyBulkEntryAction(user.id, ids, action, tags);
   revalidatePath("/entries");
+  if (!count) return { message: "Nothing to update", tone: "danger" };
+  return {
+    message: `${bulkActionLabels[action]} ${pluralizeEntries(count)}`,
+    undo: kind ? undoFor(kind, before.map((entry) => ({ id: entry.id, value: kind === "archive" ? entry.archived : entry.starred }))) : undefined,
+  };
+}
+
+const bulkActionLabels: Record<(typeof bulkEntryActions)[number], string> = {
+  "toggle-read": "Switched read state on",
+  "toggle-star": "Switched stars on",
+  archive: "Archived",
+  unarchive: "Moved back to unread",
+  star: "Starred",
+  unstar: "Removed stars from",
+  tag: "Updated tags on",
+  "add-tags": "Added tags to",
+  "remove-tags": "Removed tags from",
+  delete: "Deleted",
+};
+
+/**
+ * Applies an undo token. Ownership is re-checked here because the token makes a
+ * round trip through the browser, and the write is scoped to the signed-in user.
+ */
+export async function undoAction(token: unknown): Promise<ActionResult> {
+  const user = await requireUser();
+  const undo = parseUndoToken(token);
+  if (!undo) return { message: "There is nothing left to undo", tone: "danger" };
+
+  const now = new Date();
+  const writes = undo.kind === "archive"
+    ? [
+        db.entry.updateMany({ where: { userId: user.id, id: { in: undo.on } }, data: { archived: true, archivedAt: now } }),
+        db.entry.updateMany({ where: { userId: user.id, id: { in: undo.off } }, data: { archived: false, archivedAt: null } }),
+      ]
+    : [
+        db.entry.updateMany({ where: { userId: user.id, id: { in: undo.on } }, data: { starred: true, starredAt: now } }),
+        db.entry.updateMany({ where: { userId: user.id, id: { in: undo.off } }, data: { starred: false, starredAt: null } }),
+      ];
+  const results = await db.$transaction(writes);
+  const restored = results.reduce((total, result) => total + result.count, 0);
+
+  revalidatePath("/entries", "layout");
+  return restored
+    ? { message: `Restored ${pluralizeEntries(restored)}`, tone: "success" }
+    : { message: "There is nothing left to undo", tone: "danger" };
 }
 
 export async function deleteEntry(entryId: string) {
@@ -277,6 +351,7 @@ export async function updatePreferences(formData: FormData) {
     itemsPerPage: z.coerce.number().int().min(5).max(100),
     readingSpeed: z.coerce.number().min(50).max(1_000),
     language: z.string().trim().min(2).max(20),
+    theme: z.enum(themes),
     font: z.enum(["sans", "serif"]),
     fontSize: z.coerce.number().min(0.75).max(2),
     lineHeight: z.coerce.number().min(1.2).max(2.5),
@@ -288,7 +363,35 @@ export async function updatePreferences(formData: FormData) {
     customCss: sanitizeReaderCss(String(formData.get("customCss") ?? "")),
   };
   await db.userPreference.upsert({ where: { userId: user.id }, create: { userId: user.id, ...parsed, ...presentation }, update: { ...parsed, ...presentation } });
+  await writeThemeCookie(parsed.theme);
   revalidatePath("/entries/settings");
+}
+
+/**
+ * The quick switcher in the app shell. Separate from `updatePreferences` so a
+ * theme change never has to round-trip the whole preferences form.
+ */
+export async function saveTheme(value: unknown) {
+  const user = await requireUser();
+  const theme = parseTheme(value);
+  await db.userPreference.upsert({ where: { userId: user.id }, create: { userId: user.id, theme }, update: { theme } });
+  await writeThemeCookie(theme);
+  revalidatePath("/", "layout");
+}
+
+/**
+ * Readable by the root layout so the palette is committed server-side. It
+ * carries no identity, so it is deliberately not httpOnly: the client toggle
+ * and the pre-paint bootstrap script both need to see it.
+ */
+async function writeThemeCookie(theme: Theme) {
+  (await cookies()).set(THEME_COOKIE, theme, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+  });
 }
 
 export async function rotateFeedToken() {

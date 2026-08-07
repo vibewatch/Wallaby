@@ -9,8 +9,13 @@ The repository is evidence-driven about its wallabag compatibility surface. The 
 - Credentials authentication through Auth.js, with Prisma-backed users and adapter tables
 - Authenticator-app or SMTP email two-factor authentication, single-use recovery codes, and revocable 15-day trusted devices
 - Save a URL, securely fetch it, extract a readable copy, and deduplicate per user
-- Unread, archive, starred, all, annotated, tag, and full-text-like library views
+- Unread, archive, starred, all, annotated, tag, and untagged library views
+- Ranked full-text search with prefix and quoted-phrase matching, highlighted result snippets, and a portable substring fallback
 - Responsive article reader, tags, notes, archive/star/refetch/delete actions, and public share links
+- Light, dark, and system-following themes applied before first paint
+- Per-entry reading progress with a resume prompt, and a keyboard layer covering navigation, entry actions, and reader controls
+- Installable as a progressive web app with an offline shell that never caches saved articles
+- Toast feedback with undo for archive, star, and bulk actions, and confirmation on irreversible ones
 - Per-user reading preferences, private Atom feed tokens, and hashed bearer API tokens
 - Profile, password, scoped data-reset, cross-browser session revocation, and account-deletion workflows
 - Administrator user/role/password management and instance-wide redirect-origin policy

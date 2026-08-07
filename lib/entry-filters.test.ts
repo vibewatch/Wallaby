@@ -31,6 +31,25 @@ describe("entry filter contract", () => {
     expect(entryWhere("user-1", filters, 100, null).OR).toHaveLength(4);
   });
 
+  it("defers to a resolved search result instead of matching substrings", () => {
+    const filters = parseEntryFilters({ view: "all", q: "portable", tag: "research" });
+    const where = entryWhere("user-1", filters, 200, null, ["a", "b"]);
+    expect(where).toMatchObject({ id: { in: ["a", "b"] }, tags: { some: { slug: "research" } } });
+    expect(where.OR).toBeUndefined();
+  });
+
+  it("matches nothing when a search resolved to nothing", () => {
+    const filters = parseEntryFilters({ view: "all", q: "portable" });
+    expect(entryWhere("user-1", filters, 200, null, [])).toMatchObject({ id: { in: [] } });
+  });
+
+  it("leaves the predicate alone when there is no text query to resolve", () => {
+    const filters = parseEntryFilters({ view: "all" });
+    const where = entryWhere("user-1", filters, 200, null, ["a"]);
+    expect(where.id).toBeUndefined();
+    expect(where.OR).toBeUndefined();
+  });
+
   it("rejects impossible dates, out-of-range numbers, and unknown views", () => {
     const filters = parseEntryFilters({ view: "unknown", createdFrom: "2025-02-31", httpStatus: "700", minRead: "-1" });
     expect(filters).toMatchObject({ view: "unread", createdFrom: null, httpStatus: null, minRead: null });

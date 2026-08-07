@@ -5,6 +5,9 @@ import { notFound } from "next/navigation";
 import type { CSSProperties } from "react";
 
 import { ArticleAnnotator } from "@/components/article-annotator";
+import { ActionForm } from "@/components/action-form";
+import { ConfirmForm } from "@/components/confirm-form";
+import { ReadingProgress } from "@/components/reading-progress";
 import {
   addAnnotation,
   addTag,
@@ -50,20 +53,23 @@ export default async function EntryPage({ params }: PageProps) {
   const readingTime = Math.max(1, Math.ceil(entry.readingTime * 200 / (preference?.readingSpeed ?? 200)));
   return (
     <div className="reader-page">
+      <ReadingProgress entryId={entry.id} initialProgress={entry.readingProgress} archiveOnFinish={preference?.actionMarkAsRead ?? false} />
       <header className="reader-toolbar">
         <Link href="/entries" className="back-link"><ArrowLeft size={17} /> Library</Link>
         <div className="reader-actions">
-          <form action={toggleStarred.bind(null, entry.id)}><button className={entry.starred ? "active" : ""} title="Star"><Star size={17} fill={entry.starred ? "currentColor" : "none"} /></button></form>
-          <form action={toggleArchived.bind(null, entry.id)}><button className={entry.archived ? "active" : ""} title={entry.archived ? "Mark unread" : "Archive"}><Archive size={17} /></button></form>
-          <form action={refetchEntry.bind(null, entry.id)}><button title="Fetch article again"><RefreshCw size={17} /></button></form>
+          <ActionForm action={toggleStarred.bind(null, entry.id)}><button data-shortcut="star" className={entry.starred ? "active" : ""} title="Star"><Star size={17} fill={entry.starred ? "currentColor" : "none"} /></button></ActionForm>
+          <ActionForm action={toggleArchived.bind(null, entry.id)}><button data-shortcut="archive" className={entry.archived ? "active" : ""} title={entry.archived ? "Mark unread" : "Archive"}><Archive size={17} /></button></ActionForm>
+          <form action={refetchEntry.bind(null, entry.id)}><button data-shortcut="refetch" title="Fetch article again"><RefreshCw size={17} /></button></form>
           <form action={toggleShare.bind(null, entry.id)}><button className={entry.shareToken ? "active" : ""} title="Public sharing"><Share2 size={17} /></button></form>
-          <a href={entry.url} target="_blank" rel="noopener noreferrer" title="Open original"><ExternalLink size={17} /></a>
-          <form action={deleteEntry.bind(null, entry.id)}><button className="danger-action" title="Delete"><Trash2 size={17} /></button></form>
+          <a href={entry.url} target="_blank" rel="noopener noreferrer" title="Open original" data-shortcut="original"><ExternalLink size={17} /></a>
+          <ConfirmForm action={deleteEntry.bind(null, entry.id)} confirm={`Delete “${entry.title}”? This removes the saved copy and cannot be undone.`}>
+            <button className="danger-action" title="Delete"><Trash2 size={17} /></button>
+          </ConfirmForm>
         </div>
       </header>
 
       <div className="reader-columns">
-        <article className="reader-article" style={readerStyle}>
+        <article className="reader-article" style={readerStyle} data-reading-target>
           {preference?.customCss ? <style>{`.reader-article > .article-content { ${preference.customCss} }`}</style> : null}
           <header className="article-header">
             <p className="article-domain"><Link href={`/entries?view=same-domain&entry=${entry.id}`}>{entry.domainName}</Link></p>

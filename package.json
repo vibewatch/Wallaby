@@ -23,6 +23,7 @@
     "test:production-config": "vitest run lib/production-config.test.ts",
     "config:validate": "tsx scripts/validate-production.ts",
     "images:cleanup": "tsx scripts/cleanup-images.ts",
+    "icons:generate": "tsx scripts/generate-icons.ts",
     "import:worker": "tsx scripts/import-worker.ts",
     "import:worker:once": "tsx scripts/import-worker.ts --once",
     "import:file": "tsx scripts/import-file.ts",

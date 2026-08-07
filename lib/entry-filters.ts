@@ -49,7 +49,13 @@ export function parseEntryFilters(source: FilterSource, defaultView = "unread"):
   };
 }
 
-export function entryWhere(userId: string, filters: EntryFilters, readingSpeed: number, sameDomain: string | null): Prisma.EntryWhereInput {
+/**
+ * `matchedIds` carries the result of a full-text search. When it is present the
+ * text query is already answered — ranked and deduplicated — so the predicate
+ * only has to restrict to that set. When it is `null` the search layer had no
+ * index to use and the portable substring conditions apply instead.
+ */
+export function entryWhere(userId: string, filters: EntryFilters, readingSpeed: number, sameDomain: string | null, matchedIds: string[] | null = null): Prisma.EntryWhereInput {
   const where: Prisma.EntryWhereInput = { userId };
   if (filters.view === "unread") where.archived = false;
   if (filters.view === "archive") where.archived = true;
@@ -71,12 +77,15 @@ export function entryWhere(userId: string, filters: EntryFilters, readingSpeed: 
   if (filters.hasAnnotations) where.annotations = { some: {} };
   if (filters.isShared) where.shareToken = { not: null };
   if (filters.tag) where.tags = { some: { slug: filters.tag } };
-  if (filters.query) where.OR = [
-    { title: { contains: filters.query } },
-    { content: { contains: filters.query } },
-    { domainName: { contains: filters.query } },
-    { tags: { some: { label: { contains: filters.query } } } },
-  ];
+  if (filters.query) {
+    if (matchedIds) where.id = { in: matchedIds };
+    else where.OR = [
+      { title: { contains: filters.query } },
+      { content: { contains: filters.query } },
+      { domainName: { contains: filters.query } },
+      { tags: { some: { label: { contains: filters.query } } } },
+    ];
+  }
   return where;
 }
 
