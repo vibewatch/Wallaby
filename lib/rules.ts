@@ -1,4 +1,4 @@
-import type { Entry } from "@prisma/client";
+import type { Entry, Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
 
@@ -53,11 +53,11 @@ export function parseTaggingRuleImport(value: unknown): TaggingRulePayload[] {
   });
 }
 
-export async function applyTaggingRules(userId: string, entryId: string) {
+export async function applyTaggingRules(userId: string, entryId: string, client: Prisma.TransactionClient = db) {
   const [entry, rules, preference] = await Promise.all([
-    db.entry.findFirst({ where: { id: entryId, userId } }),
-    db.taggingRule.findMany({ where: { userId }, orderBy: { createdAt: "asc" } }),
-    db.userPreference.findUnique({ where: { userId }, select: { readingSpeed: true } }),
+    client.entry.findFirst({ where: { id: entryId, userId } }),
+    client.taggingRule.findMany({ where: { userId }, orderBy: { createdAt: "asc" } }),
+    client.userPreference.findUnique({ where: { userId }, select: { readingSpeed: true } }),
   ]);
   if (!entry || !rules.length) return;
   const fields = entryFields(entry, preference?.readingSpeed ?? 200);
@@ -67,7 +67,7 @@ export async function applyTaggingRules(userId: string, entryId: string) {
     for (const value of rule.tags) if (typeof value === "string" && value.trim()) labels.add(value.trim().toLowerCase());
   }
   if (!labels.size) return;
-  await db.entry.update({
+  await client.entry.update({
     where: { id: entry.id },
     data: {
       tags: {

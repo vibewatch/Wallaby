@@ -56,6 +56,8 @@ The Docker image includes a readiness-based health check. Unexpected server fail
 
 Run the import worker continuously. The default Compose profile starts it only after the web container is healthy. Jobs and their initial items are published atomically, active claims renew every 30 seconds, and abandoned claims are recovered after five minutes. Unique claim tokens prevent stale workers from publishing results after recovery, and retries are bounded. For the SQLite profile, keep one worker process; its internal concurrency already processes three items at once.
 
+Recovered imports finish image processing and automatic tagging before completing. Image downloads stay outside database transactions; only a current claim can publish their results. Abrupt process death can leave unreferenced media files, which the existing `images:cleanup` command reconciles.
+
 SMTP delivery, Pocket authorization, authenticated publication login, and optional Chromium extraction depend on real external providers and must be smoke-tested with deployment-owned accounts. Browser extraction also requires `INSTALL_CHROMIUM=true` at image build time together with `WALLABY_BROWSER_RENDER=true` at runtime; ordinary HTTP extraction remains available when both are off.
 
 ## Operational checks

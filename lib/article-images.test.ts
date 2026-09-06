@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 import type { Fetcher } from "@wallaby/extractor";
 import sharp from "sharp";
@@ -94,16 +94,18 @@ describe("article image capture", () => {
   });
 
   it("rejects storage paths that could escape the configured media root", () => {
-    expect(() => resolveMediaPath("../secrets", "/tmp/wallaby-media-test")).toThrow("Invalid media path");
-    expect(() => resolveMediaPath("user/../../secrets", "/tmp/wallaby-media-test")).toThrow("Invalid media path");
-    expect(() => resolveMediaPath("/absolute/path", "/tmp/wallaby-media-test")).toThrow("Invalid media path");
+    const mediaRoot = resolve(".test-runs", "wallaby-media-test");
+    expect(() => resolveMediaPath("../secrets", mediaRoot)).toThrow("Invalid media path");
+    expect(() => resolveMediaPath("user/../../secrets", mediaRoot)).toThrow("Invalid media path");
+    expect(() => resolveMediaPath("/absolute/path", mediaRoot)).toThrow("Invalid media path");
   });
 });
 
 async function temporaryMediaRoot(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "wallaby-images-"));
+  const directory = join(".test-runs", `wallaby-images-${randomUUID()}`);
+  await mkdir(directory, { recursive: true });
   temporaryDirectories.push(directory);
-  return directory;
+  return resolve(directory);
 }
 
 function imageFetcher(images: Map<string, Buffer>, mimeType = "image/png"): Fetcher {

@@ -35,6 +35,18 @@ describe("Extractor", () => {
     expect(content.html).toContain("Offline article");
   });
 
+  it("cleans saved HTML without discarding supplementary article content", () => {
+    const html = new Extractor().cleanupHtml(
+      `<article><p>${"The main article is already extracted. ".repeat(80)}</p><aside><p>A supplementary note worth keeping.</p><a href="/notes">Notes</a></aside><script>unsafe()</script></article>`,
+      "https://example.com/saved",
+    );
+
+    expect(html).toContain("The main article is already extracted.");
+    expect(html).toContain("A supplementary note worth keeping.");
+    expect(html).toContain('href="https://example.com/notes"');
+    expect(html).not.toContain("<script");
+  });
+
   it("cleans prefetched content without logging in or following publisher pagination", async () => {
     const extractor = new Extractor({
       fetcher: { async fetch() { throw new Error("Prefetched content must not make network requests"); } },

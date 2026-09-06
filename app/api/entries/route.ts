@@ -7,7 +7,7 @@ import { authenticateApiRequest, unauthorized } from "@/lib/api-auth";
 import { apiError, apiRequestObject } from "@/lib/api-response";
 import { db } from "@/lib/db";
 import { serializeEntry } from "@/lib/entry-serializer";
-import { createEntry, parseTags, slugify } from "@/lib/entries";
+import { createEntryWithResult, parseTags, slugify } from "@/lib/entries";
 import { getExtractor } from "@/lib/extractor";
 import { pageNumber, positiveInteger } from "@/lib/pagination";
 
@@ -87,7 +87,7 @@ export async function POST(request: Request) {
     normalizedUrl = url.toString();
   } catch { return apiError(400, "invalid_url", `The url “${parsed.data.url}” is not a valid HTTP URL`); }
 
-  const base = await createEntry(userId, {
+  const { entry: base, created } = await createEntryWithResult(userId, {
     url: normalizedUrl,
     title: parsed.data.title,
     content: parsed.data.content,
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
     previewPicture: parsed.data.preview_picture,
   });
   const labels = parseTags(parsed.data.tags);
-  const content = parsed.data.content ? getExtractor().cleanupHtml(parsed.data.content, normalizedUrl) : undefined;
+  const content = !created && parsed.data.content ? getExtractor().cleanupHtml(parsed.data.content, normalizedUrl) : undefined;
   const archived = parsed.data.archive ?? base.archived;
   const starred = parsed.data.starred ?? base.starred;
   const entry = await db.entry.update({
@@ -109,7 +109,7 @@ export async function POST(request: Request) {
       title: parsed.data.title?.trim() || undefined,
       content,
       language: parsed.data.language,
-      previewPicture: parsed.data.preview_picture,
+      previewPicture: created ? undefined : parsed.data.preview_picture,
       publishedAt: parseApiDate(parsed.data.published_at),
       publishedBy: parseAuthors(parsed.data.authors),
       originUrl: parsed.data.origin_url,

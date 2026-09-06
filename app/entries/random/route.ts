@@ -2,8 +2,8 @@ import { randomInt } from "node:crypto";
 
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { entryWhere, parseEntryFilters } from "@/lib/entry-filters";
-import { rankedEntryIds } from "@/lib/search";
+import { parseEntryFilters } from "@/lib/entry-filters";
+import { resolveEntryQuery } from "@/lib/search";
 
 export async function GET(request: Request) {
   const session = await auth();
@@ -17,9 +17,10 @@ export async function GET(request: Request) {
       ? db.entry.findFirst({ where: { id: filters.sourceEntryId, userId }, select: { domainName: true } })
       : null,
   ]);
-  const candidateWhere = entryWhere(userId, { ...filters, query: "" }, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null);
-  const ranked = filters.query ? await rankedEntryIds(userId, filters.query, candidateWhere) : null;
-  const where = entryWhere(userId, filters, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null, ranked);
+  const { where } = await resolveEntryQuery(userId, filters, {
+    readingSpeed: preference?.readingSpeed,
+    sameDomain: sourceEntry?.domainName,
+  });
   query.set("view", filters.view);
   query.delete("page");
   const libraryUrl = `/entries?${query}`;

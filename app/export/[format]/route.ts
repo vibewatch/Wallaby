@@ -1,9 +1,9 @@
 import { auth } from "@/auth";
 import { renderBinaryExport, type BinaryExportFormat } from "@/lib/binary-exports";
 import { db } from "@/lib/db";
-import { entryWhere, parseEntryFilters } from "@/lib/entry-filters";
+import { parseEntryFilters } from "@/lib/entry-filters";
 import { renderExport, type TextExportFormat } from "@/lib/exports";
-import { rankedEntryIds } from "@/lib/search";
+import { resolveEntryQuery } from "@/lib/search";
 
 type Context = { params: Promise<{ format: string }> };
 
@@ -24,17 +24,11 @@ export async function GET(request: Request, { params }: Context) {
       ? db.entry.findFirst({ where: { id: filters.sourceEntryId, userId: session.user.id }, select: { domainName: true } })
       : null,
   ]);
-  // "Export results" has to reproduce what the library showed, so the same
-  // search layer resolves the text query here. Ordering stays newest-first: a
-  // downloaded archive reads by date, not by relevance to a since-closed query.
-  const explicitId = query.get("id");
-  const candidateWhere = entryWhere(session.user.id, { ...filters, query: "" }, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null);
-  if (explicitId) candidateWhere.id = explicitId;
-  const ranked = filters.query ? await rankedEntryIds(session.user.id, filters.query, candidateWhere) : null;
-  const where = entryWhere(session.user.id, filters, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null, ranked);
-  // Combined rather than overwritten so `?id=` narrows the filtered set instead
-  // of escaping it.
-  if (explicitId) where.id = typeof where.id === "object" && where.id !== null ? { ...where.id, equals: explicitId } : explicitId;
+  const { where } = await resolveEntryQuery(session.user.id, filters, {
+    readingSpeed: preference?.readingSpeed,
+    sameDomain: sourceEntry?.domainName,
+    entryId: query.get("id"),
+  });
   const entries = await db.entry.findMany({ where, include: { tags: true, annotations: true, images: format === "epub" }, orderBy: { createdAt: "desc" } });
   const output = binaryFormats.includes(format as BinaryExportFormat)
     ? await renderBinaryExport(entries, format as BinaryExportFormat)

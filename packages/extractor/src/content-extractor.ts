@@ -184,7 +184,9 @@ export class ContentExtractor {
   }
 
   cleanupHtml(html: string, url: URL, options: ContentExtractorOptions = defaultOptions): string {
-    const extracted = this.process(html, url, new SiteConfig(), options);
+    const config = new SiteConfig();
+    config.body = ["//body"];
+    const extracted = this.process(html, url, config, options);
     return extracted.html || cleanupHtml(html, url, options);
   }
 

@@ -70,8 +70,8 @@ export function resolveMediaPath(relativePath: string, mediaRoot = getMediaRoot(
   return target;
 }
 
-export async function getImageDownloadConfiguration() {
-  return db.instanceConfiguration.upsert({
+export async function getImageDownloadConfiguration(client: Prisma.TransactionClient = db) {
+  return client.instanceConfiguration.upsert({
     where: { id: "default" },
     update: {},
     create: { id: "default" },
@@ -185,15 +185,34 @@ export async function captureArticleImages(options: CaptureArticleImagesOptions)
 
 export async function localizeEntryImages(
   entryId: string,
-  overrides: { force?: boolean; fetcher?: Fetcher; mediaRoot?: string; settings?: Partial<ImageCaptureSettings> } = {},
+  overrides: {
+    force?: boolean;
+    fetcher?: Fetcher;
+    mediaRoot?: string;
+    settings?: Partial<ImageCaptureSettings>;
+    beforePublish?: (transaction: Prisma.TransactionClient, entryId: string) => Promise<void>;
+  } = {},
 ) {
   const entry = await db.entry.findUnique({ where: { id: entryId }, include: { images: true } });
   if (!entry) throw new Error("Entry not found");
-  const configuration = await getImageDownloadConfiguration();
+  const beforePublish = overrides.beforePublish;
+  const configuration = beforePublish
+    ? await db.$transaction(async (transaction) => {
+        await beforePublish(transaction, entry.id);
+        return getImageDownloadConfiguration(transaction);
+      })
+    : await getImageDownloadConfiguration();
   if (!configuration.downloadImagesEnabled && !overrides.force) {
     if (entry.images.length) {
-      await db.entryImage.deleteMany({ where: { entryId: entry.id } });
-      await removeEntryMediaDirectory(entry.userId, entry.id, overrides.mediaRoot);
+      const originals = new Map(entry.images.map((image) => [`/media/${image.id}`, image.originalUrl]));
+      const restored = mapImageSources(entry.content, entry.previewPicture, (source) => originals.get(source) ?? source);
+      await db.$transaction(async (transaction) => {
+        await beforePublish?.(transaction, entry.id);
+        await transaction.entry.update({ where: { id: entry.id }, data: { content: restored.html, previewPicture: restored.previewPicture } });
+        await transaction.entryImage.deleteMany({ where: { entryId: entry.id, id: { in: entry.images.map(({ id }) => id) } } });
+      });
+      await Promise.allSettled(entry.images.map((image) => unlink(resolveMediaPath(image.relativePath, overrides.mediaRoot))));
+      return db.entry.findUniqueOrThrow({ where: { id: entry.id }, include: { tags: true, annotations: true, images: true } });
     }
     return entry;
   }
@@ -209,42 +228,78 @@ export async function localizeEntryImages(
     userBytesAvailable: Math.max(0, configuration.imageUserMaxBytes - (used._sum.byteSize ?? 0)),
     ...overrides.settings,
   };
+  const sources = new Set<string>();
+  mapImageSources(entry.content, entry.previewPicture, (source) => { sources.add(source); return source; });
+  const retained = entry.images.filter((image) => sources.has(`/media/${image.id}`));
+  const retainedBytes = retained.reduce((total, image) => total + image.byteSize, 0);
   const captured = await captureArticleImages({
     userId: entry.userId,
     entryId: entry.id,
     html: entry.content,
     baseUrl: entry.url,
     previewPicture: entry.previewPicture,
-    settings,
+    settings: {
+      ...settings,
+      imageMaxCount: Math.max(0, settings.imageMaxCount - retained.length),
+      imageEntryMaxBytes: Math.max(0, settings.imageEntryMaxBytes - retainedBytes),
+      userBytesAvailable: Math.max(0, (settings.userBytesAvailable ?? settings.imageUserMaxBytes) - retainedBytes),
+    },
     fetcher: overrides.fetcher,
     mediaRoot: overrides.mediaRoot,
   });
   try {
-    const operations: Prisma.PrismaPromise<unknown>[] = [
-      db.entryImage.deleteMany({ where: { entryId: entry.id } }),
-    ];
-    if (captured.images.length) {
-      operations.push(db.entryImage.createMany({ data: captured.images.map((image) => ({
-        id: image.id,
-        userId: image.userId,
-        entryId: image.entryId,
-        originalUrl: image.originalUrl,
-        contentType: image.contentType,
-        byteSize: image.byteSize,
-        sha256: image.sha256,
-        relativePath: image.relativePath,
-      })) }));
-    }
-    operations.push(db.entry.update({ where: { id: entry.id }, data: { content: captured.html, previewPicture: captured.previewPicture } }));
-    await db.$transaction(operations);
+    await db.$transaction(async (transaction) => {
+      await beforePublish?.(transaction, entry.id);
+      await transaction.entryImage.deleteMany({ where: { entryId: entry.id, id: { notIn: retained.map(({ id }) => id) } } });
+      if (captured.images.length) {
+        await transaction.entryImage.createMany({ data: captured.images.map((image) => ({
+          id: image.id,
+          userId: image.userId,
+          entryId: image.entryId,
+          originalUrl: image.originalUrl,
+          contentType: image.contentType,
+          byteSize: image.byteSize,
+          sha256: image.sha256,
+          relativePath: image.relativePath,
+        })) });
+      }
+      await transaction.entry.update({ where: { id: entry.id }, data: { content: captured.html, previewPicture: captured.previewPicture } });
+    });
   } catch (error) {
     await Promise.allSettled(captured.images.map((image) => unlink(resolveMediaPath(image.relativePath, overrides.mediaRoot))));
     throw error;
   }
-  const activePaths = new Set(captured.images.map((image) => image.relativePath));
+  const activePaths = new Set([...retained, ...captured.images].map((image) => image.relativePath));
   await Promise.allSettled(entry.images.filter((image) => !activePaths.has(image.relativePath)).map((image) => unlink(resolveMediaPath(image.relativePath, overrides.mediaRoot))));
-  if (!captured.images.length) await removeEntryMediaDirectory(entry.userId, entry.id, overrides.mediaRoot).catch(() => undefined);
   return db.entry.findUniqueOrThrow({ where: { id: entry.id }, include: { tags: true, annotations: true, images: true } });
+}
+
+function mapImageSources(html: string, previewPicture: string | null, rewrite: (source: string) => string): { html: string; previewPicture: string | null } {
+  const dom = new JSDOM(`<body>${html}</body>`);
+  let changed = false;
+  try {
+    for (const element of dom.window.document.querySelectorAll("img, source, video")) {
+      for (const attribute of ["src", "poster"]) {
+        const source = element.getAttribute(attribute);
+        if (!source) continue;
+        const replacement = rewrite(source);
+        if (replacement !== source) { element.setAttribute(attribute, replacement); changed = true; }
+      }
+      const srcset = element.getAttribute("srcset");
+      if (srcset) {
+        let rewritten = false;
+        const candidates = parseSrcset(srcset).map((item) => {
+          const source = rewrite(item.source);
+          if (source !== item.source) rewritten = true;
+          return `${source}${item.descriptor ? ` ${item.descriptor}` : ""}`;
+        });
+        if (rewritten) { element.setAttribute("srcset", candidates.join(", ")); changed = true; }
+      }
+    }
+    return { html: changed ? dom.window.document.body.innerHTML : html, previewPicture: previewPicture ? rewrite(previewPicture) : null };
+  } finally {
+    dom.window.close();
+  }
 }
 
 export async function deleteEntriesWithMedia(userId: string, where: Prisma.EntryWhereInput): Promise<number> {

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
+import { entryWhere, type EntryFilters } from "@/lib/entry-filters";
 import { stripHtml } from "@/lib/text";
 
 /**
@@ -135,6 +136,20 @@ export async function rankedEntryIds(userId: string, term: string, where: Prisma
     take: limit,
   });
   return [...new Set([...ranked, ...tagged.map(({ id }) => id)])].slice(0, limit);
+}
+
+type EntryQueryOptions = {
+  readingSpeed?: number;
+  sameDomain?: string | null;
+  entryId?: string | null;
+};
+
+export async function resolveEntryQuery(userId: string, filters: EntryFilters, { readingSpeed = 200, sameDomain = null, entryId }: EntryQueryOptions = {}): Promise<{ where: Prisma.EntryWhereInput; ranked: string[] | null }> {
+  const candidateWhere = entryWhere(userId, { ...filters, query: "" }, readingSpeed, sameDomain);
+  if (entryId) candidateWhere.id = entryId;
+  const ranked = filters.query ? await rankedEntryIds(userId, filters.query, candidateWhere) : null;
+  const where = entryWhere(userId, filters, readingSpeed, sameDomain, ranked);
+  return { where: entryId ? { AND: [where, { id: entryId }] } : where, ranked };
 }
 
 type EntryPageArgs = {

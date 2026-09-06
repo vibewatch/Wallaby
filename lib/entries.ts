@@ -27,6 +27,8 @@ export type EntryInput = {
   publishedBy?: string[];
 };
 
+type EntryPublicationGuard = (transaction: Prisma.TransactionClient, entryId: string) => Promise<void>;
+
 export function hashUrl(url: string): string {
   return createHash("sha256").update(url).digest("hex");
 }
@@ -48,7 +50,7 @@ export async function createEntry(userId: string, input: EntryInput) {
 export async function createEntryWithResult(
   userId: string,
   input: EntryInput,
-  onCreate?: (transaction: Prisma.TransactionClient, entryId: string) => Promise<void>,
+  beforePublish?: EntryPublicationGuard,
 ) {
   const normalized = new URL(input.url.match(/^https?:\/\//i) ? input.url : `https://${input.url}`);
   const givenUrl = normalized.toString();
@@ -110,17 +112,35 @@ export async function createEntryWithResult(
     include: { tags: true, annotations: true },
   });
   // An import's provenance must commit with its entry, before any post-save work.
-  const created = onCreate
+  const created = beforePublish
     ? await db.$transaction(async (transaction) => {
         const entry = await persist(transaction);
-        await onCreate(transaction, entry.id);
+        await beforePublish(transaction, entry.id);
         return entry;
       })
     : await persist(db);
-  try { await localizeEntryImages(created.id); }
-  catch { /* Image capture is best-effort; the sanitized remote references remain readable. */ }
-  await applyTaggingRules(userId, created.id);
+  await finalizeEntryCreation(userId, created.id, beforePublish);
   return { entry: await db.entry.findUniqueOrThrow({ where: { id: created.id }, include: { tags: true, annotations: true } }), created: true as const };
+}
+
+export async function finalizeEntryCreation(userId: string, entryId: string, beforePublish?: EntryPublicationGuard): Promise<void> {
+  try { await localizeEntryImages(entryId, { beforePublish }); }
+  catch (error) {
+    if (beforePublish) throw error;
+    console.warn(JSON.stringify({
+      level: "warn",
+      event: "entry.image_capture.failed",
+      service: "wallaby",
+      errorType: error instanceof Error ? error.name : "UnknownError",
+      timestamp: new Date().toISOString(),
+    }));
+  }
+  if (beforePublish) {
+    await db.$transaction(async (transaction) => {
+      await beforePublish(transaction, entryId);
+      await applyTaggingRules(userId, entryId, transaction);
+    });
+  } else await applyTaggingRules(userId, entryId);
 }
 
 export async function reloadEntry(userId: string, entryId: string) {

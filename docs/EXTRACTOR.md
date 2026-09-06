@@ -39,8 +39,8 @@ The engine exposes these entry points:
 | Readability fallback | Supported | Mozilla Readability, used only for still-missing title/body | Compare scoring and pruning against `j0k3r/php-readability`; tune divergent fixtures |
 | String replacement, strip, class/id strip, attribute strip, wrap | Supported | Pre- and post-extraction DOM transforms; post-strip attributes are removed after publisher selectors run; quote-stripped class/id/image-src matching | Conditional transform ordering parity corpus |
 | Lazy image promotion | Supported | Upstream default attribute set incl. `data-srcset`→`srcset`, plus WordPress `noscript` sibling restoration | Port complete source/srcset edge-case fixtures |
-| Content cleanup | Supported | Empty `<a>`/`<p>` removal, single-child container unwrap, leading duplicate-title heading removal, self-closing iframe placeholder | Port `normalize()`/nested-unwrap fixtures |
-| Prefetched/imported content | Supported | Whole-body cleanup preserves saved HTML without requiring publisher wrappers; prefetched input never triggers login, single-page, or next-page requests | — |
+| Content cleanup | Supported | Whole-body cleanup retains supplementary article sections; empty `<a>`/`<p>` removal, single-child container unwrap, leading duplicate-title heading removal, self-closing iframe placeholder | Port `normalize()`/nested-unwrap fixtures |
+| Prefetched/imported content | Supported | Saved HTML survives initial API saves, duplicate saves, and content updates without requiring publisher wrappers; prefetched input never triggers login, single-page, or next-page requests | — |
 | Relative URL rewriting | Supported | `href`, `src`, `poster`, and `srcset`; in-page `#anchor` links preserved | CSS URL rewriting and `<base>` corner cases |
 | XSS cleanup | Supported | Allowlist sanitizer removes scripts, event handlers, styles, unsafe schemes; disable with `xssFilter: false` | Differential security corpus against htmLawed; policy review for embeds |
 | No-referrer images | Supported | `referrerpolicy=no-referrer` | None known |

@@ -4,7 +4,7 @@ import { setTimeout as wait } from "node:timers/promises";
 import type { ImportJob, ImportJobItem, Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
-import { createEntryWithResult, hashUrl } from "@/lib/entries";
+import { createEntryWithResult, finalizeEntryCreation, hashUrl } from "@/lib/entries";
 import { parseImport, type ImportSource, type NormalizedImportEntry } from "@/lib/importers";
 import { decryptPocketToken, PocketClient, readPocketJobOptions } from "@/lib/pocket";
 
@@ -291,6 +291,7 @@ async function processImportItem(job: ImportJob, item: ImportJobItem, now: Date)
     if (item.entryId) {
       const owned = await db.entry.findFirst({ where: { id: item.entryId, userId: job.userId }, select: { id: true } });
       if (!owned) throw new Error("The imported entry disappeared before the item completed");
+      await finalizeEntryCreation(job.userId, owned.id, (transaction, entryId) => updateClaimedItem(job, item, { entryId }, transaction));
       await completeImportItem(job, item, owned.id, entry.annotations);
       return;
     }

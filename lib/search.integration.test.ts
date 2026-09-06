@@ -141,8 +141,7 @@ describe("findEntryPage", () => {
   });
 
   it("returns the page in relevance order with a matching total", async () => {
-    const ranked = await search.rankedEntryIds(readerId, "portable");
-    const where = filters.entryWhere(readerId, parsed("portable"), 200, null, ranked);
+    const { where, ranked } = await search.resolveEntryQuery(readerId, parsed("portable"));
     const page = await search.findEntryPage({ where, ranked, page: 1, pageSize: 2 });
     expect(page.total).toBe(3);
     expect(page.entries.map((entry) => entry.id)).toEqual([ids.titled, ids.bodied]);
@@ -210,15 +209,27 @@ describe("findEntryPage", () => {
   });
 });
 
+describe("resolveEntryQuery", () => {
+  it.each([
+    { query: "portable", entryKey: "bodied", expectedKeys: ["bodied"] },
+    { query: "portable", entryKey: "tagged", expectedKeys: ["tagged"] },
+    { query: "nonexistent", entryKey: "titled", expectedKeys: [] },
+    { query: "portable", entryKey: "stranger", expectedKeys: [] },
+  ])("keeps an explicit entry within the query and ownership filters ($query, $entryKey)", async ({ query, entryKey, expectedKeys }) => {
+    const resolved = await search.resolveEntryQuery(readerId, filters.parseEntryFilters({ view: "all", q: query }), { entryId: ids[entryKey] });
+    const page = await search.findEntryPage({ ...resolved, page: 1, pageSize: 20 });
+    expect(page.entries.map((entry) => entry.id)).toEqual(expectedKeys.map((key) => ids[key]));
+  });
+});
+
 describe("portable search fallback", () => {
   it("still searches the library when the full-text index is unavailable", async () => {
     await dbModule.db.$executeRaw`ALTER TABLE "EntrySearch" RENAME TO "UnavailableEntrySearch"`;
     search.resetSearchEngine();
     try {
       await expect(search.searchEngine()).resolves.toBe("scan");
-      const ranked = await search.rankedEntryIds(readerId, "portable");
+      const { where, ranked } = await search.resolveEntryQuery(readerId, filters.parseEntryFilters({ view: "all", q: "portable" }));
       expect(ranked).toBeNull();
-      const where = filters.entryWhere(readerId, filters.parseEntryFilters({ view: "all", q: "portable" }), 200, null, ranked);
       const page = await search.findEntryPage({ where, ranked, page: 1, pageSize: 20 });
       expect(page.entries.map((entry) => entry.id).sort()).toEqual([ids.titled, ids.bodied, ids.tagged].sort());
     } finally {

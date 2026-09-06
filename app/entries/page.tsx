@@ -8,9 +8,9 @@ import { EntryCard } from "@/components/entry-card";
 import { bulkUpdateEntries } from "@/lib/actions";
 import { requireUser } from "@/lib/auth-user";
 import { db } from "@/lib/db";
-import { advancedFilterNames, entryWhere, parseEntryFilters } from "@/lib/entry-filters";
+import { advancedFilterNames, parseEntryFilters } from "@/lib/entry-filters";
 import { pageNumber } from "@/lib/pagination";
-import { findEntryPage, rankedEntryIds, tokenizeSearch } from "@/lib/search";
+import { findEntryPage, resolveEntryQuery, tokenizeSearch } from "@/lib/search";
 
 export const metadata: Metadata = { title: "Library" };
 
@@ -40,11 +40,10 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
   const pageSize = Math.min(preference?.itemsPerPage ?? 20, 100);
   const page = pageNumber(typeof params.page === "string" ? params.page : undefined, pageSize);
 
-  // Resolving the text query first lets the index rank the candidates; a null
-  // result means there is no index and the predicate falls back to substrings.
-  const candidateWhere = entryWhere(user.id, { ...filters, query: "" }, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null);
-  const ranked = query ? await rankedEntryIds(user.id, query, candidateWhere) : null;
-  const where = entryWhere(user.id, filters, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null, ranked);
+  const { where, ranked } = await resolveEntryQuery(user.id, filters, {
+    readingSpeed: preference?.readingSpeed,
+    sameDomain: sourceEntry?.domainName,
+  });
   const highlight = query ? tokenizeSearch(query) : null;
 
   const [{ entries, total }, selectedTag, languageRows] = await Promise.all([

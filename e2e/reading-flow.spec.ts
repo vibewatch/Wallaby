@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, posix } from "node:path";
 
-import { expect, request as apiRequest, test, type Page } from "@playwright/test";
+import { expect, request as apiRequest, test, type Locator, type Page } from "@playwright/test";
 import { hash } from "bcryptjs";
 import { strFromU8, unzipSync } from "fflate";
 import { PDFDocument } from "pdf-lib";
@@ -73,6 +73,47 @@ test("reader can save extracted content, organize it, annotate it, and share it"
 
   const deleteResponse = await page.request.delete(`/api/entries/${entry.id}`);
   expect(deleteResponse.status()).toBe(204);
+});
+
+test("API saves and updates preserve supplementary prefetched content", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chrome", "Prefetched API content needs one browser profile");
+  await signIn(page);
+  const url = `https://prefetched-api.example/${randomUUID()}`;
+  const article = (note: string) => `<article><p>${"The main article is already extracted. ".repeat(80)}</p><aside><p>${note}</p></aside><script>unsafe()</script></article>`;
+  const created = await page.request.post("/api/entries", { data: {
+    url,
+    title: "Saved article with supporting information",
+    content: article("The original supplementary note."),
+  } });
+  expect(created.status()).toBe(201);
+  const entry = await created.json() as { id: string; content: string };
+  try {
+    expect(entry.content).toContain("The original supplementary note.");
+    expect(entry.content).not.toContain("<script");
+
+    const repeated = await page.request.post("/api/entries", { data: {
+      url,
+      content: article("A replacement supplementary note."),
+    } });
+    expect(repeated.status()).toBe(201);
+    const replacement = await repeated.json() as { id: string; content: string };
+    expect(replacement.id).toBe(entry.id);
+    expect(replacement.content).toContain("A replacement supplementary note.");
+    expect(replacement.content).not.toContain("The original supplementary note.");
+    expect(replacement.content).not.toContain("<script");
+
+    const patched = await page.request.patch(`/api/entries/${entry.id}`, { data: {
+      content: article("A patched supplementary note."),
+    } });
+    expect(patched.status()).toBe(200);
+    const persisted = await page.request.get(`/api/entries/${entry.id}`);
+    const updated = await persisted.json() as { content: string };
+    expect(updated.content).toContain("A patched supplementary note.");
+    expect(updated.content).not.toContain("A replacement supplementary note.");
+    expect(updated.content).not.toContain("<script");
+  } finally {
+    await page.request.delete(`/api/entries/${entry.id}`);
+  }
 });
 
 test("reading progress stays monotonic and can archive an already-finished entry", async ({ page }, testInfo) => {
@@ -454,6 +495,12 @@ test("administrators manage users, roles, passwords, and instance origin rules",
   const originalImageConfiguration = await prisma.instanceConfiguration.findUnique({ where: { id: "default" } });
   const managedContext = await browser.newContext();
   const managedPage = await managedContext.newPage();
+  const submitAdminForm = async (button: Locator) => {
+    const completed = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/entries/admin");
+    await button.click();
+    const response = await completed;
+    expect(response.status()).toBeLessThan(400);
+  };
 
   try {
     await signIn(page, adminUsername, adminPassword);
@@ -466,7 +513,7 @@ test("administrators manage users, roles, passwords, and instance origin rules",
     await imageForm.getByLabel("Maximum image size (MB)").fill("1.5");
     await imageForm.getByLabel("Maximum per entry (MB)").fill("25");
     await imageForm.getByLabel("Maximum per user (MB)").fill("100");
-    await imageForm.getByRole("button", { name: "Save image policy" }).click();
+    await submitAdminForm(imageForm.getByRole("button", { name: "Save image policy" }));
     await page.reload();
     await expect(imageForm.getByLabel("Download images when entries are saved or reloaded")).toBeChecked();
     await expect(imageForm.getByLabel("Images per entry")).toHaveValue("7");
@@ -487,7 +534,7 @@ test("administrators manage users, roles, passwords, and instance origin rules",
     expect(forbidden?.status()).toBe(404);
 
     await managedRow.getByLabel(`Role for ${managedUsername}`).selectOption("ADMIN");
-    await managedRow.getByRole("button", { name: "Save" }).click();
+    await submitAdminForm(managedRow.getByRole("button", { name: "Save" }));
     managedRow = page.locator(".admin-user-list article", { has: page.getByLabel(`Username for ${managedUsername}`) });
     await expect(managedRow.getByLabel(`Role for ${managedUsername}`)).toHaveValue("ADMIN");
     await managedPage.goto("/entries/admin");
@@ -495,7 +542,13 @@ test("administrators manage users, roles, passwords, and instance origin rules",
 
     await managedRow.getByText("Reset password", { exact: true }).click();
     await managedRow.getByLabel(`New password for ${managedUsername}`).fill(resetPassword);
-    await managedRow.getByRole("button", { name: "Reset", exact: true }).click();
+    // Expose navigation that races a still-pending administrative mutation.
+    await page.route("**/entries/admin", async (route) => {
+      if (route.request().method() === "POST") await new Promise((resolve) => setTimeout(resolve, 500));
+      await route.continue();
+    });
+    await submitAdminForm(managedRow.getByRole("button", { name: "Reset", exact: true }));
+    await page.unroute("**/entries/admin");
     await managedPage.goto("/entries");
     await expect(managedPage).toHaveURL(/\/auth\/signin/);
     await signIn(managedPage, managedUsername, resetPassword);

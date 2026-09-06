@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { PrismaClient } from "@prisma/client";
+import sharp from "sharp";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { NormalizedImportEntry } from "./importers";
@@ -36,14 +37,17 @@ beforeAll(async () => {
 }, 30_000);
 
 beforeEach(() => {
+  vi.stubEnv("WALLABY_MEDIA_DIR", resolve(directory, "media"));
   vi.stubGlobal("fetch", async () => new Response("<article><p>Isolated import fixture.</p></article>", { headers: { "content-type": "text/html" } }));
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.useRealTimers();
+  await dbModule?.db.instanceConfiguration.updateMany({ where: { id: "default" }, data: { downloadImagesEnabled: false, imageMaxCount: 30 } });
+  await dbModule?.db.taggingRule.deleteMany({ where: { userId } });
 });
 
 afterAll(async () => {
@@ -149,6 +153,36 @@ describe("operator command operations", () => {
     expect(survivors).toHaveLength(1);
     expect(survivors[0]).toMatchObject({ archived: true, annotations: [{ text: "Move me" }] });
     expect(survivors[0].tags.map((tag) => tag.label).sort()).toEqual(["first", "second"]);
+  });
+
+  it("keeps normal saves and image quotas stable across repeated finalization", async () => {
+    const red = await sharp({ create: { width: 2, height: 2, channels: 4, background: "#dd3333" } }).png().toBuffer();
+    const blue = await sharp({ create: { width: 2, height: 2, channels: 4, background: "#3333dd" } }).png().toBuffer();
+    const fetch = vi.fn(async (input: string | URL | Request) => new Response(new Uint8Array(String(input).endsWith("/red.png") ? red : blue), { headers: { "content-type": "image/png" } }));
+    vi.stubGlobal("fetch", fetch);
+    await dbModule.db.instanceConfiguration.upsert({
+      where: { id: "default" },
+      create: { id: "default", downloadImagesEnabled: true, imageMaxCount: 1 },
+      update: { downloadImagesEnabled: true, imageMaxCount: 1 },
+    });
+    await dbModule.db.taggingRule.create({ data: { userId, rule: 'title = "Normal image finalization"', tags: ["normal-save"] } });
+    const input = normalized(`https://93.184.216.34/normal-images-${randomUUID()}`, "Normal image finalization");
+    input.content = '<p>Normal save.</p><img src="https://93.184.216.34/red.png"><img src="https://93.184.216.34/blue.png">';
+    const { createEntryWithResult, finalizeEntryCreation } = await import("./entries");
+    const created = await createEntryWithResult(userId, input);
+    const initial = await dbModule.db.entry.findUniqueOrThrow({ where: { id: created.entry.id }, include: { images: true, tags: true } });
+    expect(initial.images).toHaveLength(1);
+    expect(initial.tags.map(({ label }) => label)).toEqual(["normal-save"]);
+    expect(initial.content).toContain("https://93.184.216.34/blue.png");
+
+    fetch.mockClear();
+    await finalizeEntryCreation(userId, created.entry.id);
+    const repeated = await dbModule.db.entry.findUniqueOrThrow({ where: { id: created.entry.id }, include: { images: true, tags: true } });
+    expect(repeated.images).toEqual(initial.images);
+    expect(repeated.tags).toEqual(initial.tags);
+    expect(repeated.content).toBe(initial.content);
+    expect(await readdir(resolve(directory, "media", userId, created.entry.id))).toEqual([basename(initial.images[0].relativePath)]);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -404,6 +438,166 @@ describe("durable import queue", () => {
       replacementResponse.resolve(new Response("<p>Released replacement request.</p>"));
       await Promise.allSettled([original, ...(replacement ? [replacement] : [])]);
     }
+  });
+
+  it("fences post-create image and tag publication after a replacement and refetch", async () => {
+    const red = await sharp({ create: { width: 2, height: 2, channels: 4, background: "#cc0000" } }).png().toBuffer();
+    const blue = await sharp({ create: { width: 2, height: 2, channels: 4, background: "#0000cc" } }).png().toBuffer();
+    const delayedImage = deferred<Response>();
+    let originalImageRequests = 0;
+    const url = `https://93.184.216.34/post-create-${randomUUID()}`;
+    vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+      if (String(input).endsWith("/original.png")) {
+        originalImageRequests += 1;
+        if (originalImageRequests === 1) return delayedImage.promise;
+        return new Response(new Uint8Array(blue), { headers: { "content-type": "image/png" } });
+      }
+      if (String(input).endsWith("/refetched.png")) return new Response(new Uint8Array(blue), { headers: { "content-type": "image/png" } });
+      return new Response(`<html><head><title>Refetched winner</title></head><body><article><p>${"Newest refetch content. ".repeat(60)}</p><img src="https://93.184.216.34/refetched.png"></article></body></html>`, { headers: { "content-type": "text/html" } });
+    });
+    await dbModule.db.instanceConfiguration.upsert({ where: { id: "default" }, create: { id: "default", downloadImagesEnabled: true }, update: { downloadImagesEnabled: true } });
+    const entry = normalized(url, "Before image capture");
+    entry.content = '<p>Old article content.</p><img src="https://93.184.216.34/original.png">';
+    entry.annotations = [{ text: "Keep the recovered note", quote: "", ranges: [] }];
+    await dbModule.db.taggingRule.create({ data: { userId, rule: `url = "${url}"`, tags: ["recovered-after-crash"] } });
+    const job = await queue.enqueueNormalizedImport(userId, "wallabag", [entry]);
+    const original = queue.processImportJob(job.id, { workerId: "image-worker", now: new Date("2030-05-04T00:00:00Z") });
+
+    try {
+      await vi.waitFor(() => expect(originalImageRequests).toBe(1));
+      const item = await dbModule.db.importJobItem.findFirstOrThrow({ where: { jobId: job.id } });
+      expect(item.entryId).toBeTruthy();
+      expect(await queue.processImportJob(job.id, { workerId: "image-worker", now: new Date("2030-05-04T00:06:00Z") }))
+        .toMatchObject({ status: "completed", imported: 1, skipped: 0 });
+      const recovered = await dbModule.db.entry.findUniqueOrThrow({ where: { id: item.entryId! }, include: { tags: true, images: true } });
+      expect(recovered.tags.map(({ label }) => label)).toEqual(["recovered-after-crash"]);
+      expect(recovered.images).toHaveLength(1);
+      const { reloadEntry } = await import("./entries");
+      await reloadEntry(userId, item.entryId!);
+      await dbModule.db.taggingRule.create({ data: { userId, rule: 'title = "Refetched winner"', tags: ["stale-worker-must-not-apply"] } });
+      const current = await dbModule.db.entry.findUniqueOrThrow({ where: { id: item.entryId! }, include: { images: true, tags: true, annotations: true } });
+      expect(current.images).toHaveLength(1);
+      expect(current.content).toContain("Newest refetch content");
+      const mediaRoot = resolve(directory, "media");
+      const currentImageBytes = await readFile(resolve(mediaRoot, current.images[0].relativePath));
+
+      delayedImage.resolve(new Response(new Uint8Array(red), { headers: { "content-type": "image/png" } }));
+      await original;
+
+      expect(await dbModule.db.entry.findUniqueOrThrow({ where: { id: item.entryId! }, include: { images: true, tags: true, annotations: true } })).toEqual(current);
+      expect(await readdir(resolve(mediaRoot, userId, item.entryId!))).toEqual([basename(current.images[0].relativePath)]);
+      expect(await readFile(resolve(mediaRoot, current.images[0].relativePath))).toEqual(currentImageBytes);
+      expect(await dbModule.db.importJob.findUniqueOrThrow({ where: { id: job.id } })).toMatchObject({ status: "completed", imported: 1, attempts: 2 });
+    } finally {
+      delayedImage.resolve(new Response(new Uint8Array(red), { headers: { "content-type": "image/png" } }));
+      await original;
+    }
+  });
+
+  it("recovers mandatory tagging without losing already committed images or annotations", async () => {
+    const png = await sharp({ create: { width: 2, height: 2, channels: 4, background: "#22aa44" } }).png().toBuffer();
+    const fetch = vi.fn(async () => new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } }));
+    vi.stubGlobal("fetch", fetch);
+    await dbModule.db.instanceConfiguration.upsert({ where: { id: "default" }, create: { id: "default", downloadImagesEnabled: true }, update: { downloadImagesEnabled: true } });
+    await dbModule.db.taggingRule.create({ data: { userId, rule: 'title = "Recover post-create work"', tags: ["post-create-recovered"] } });
+    const entry = normalized(`https://93.184.216.34/tag-recovery-${randomUUID()}`, "Recover post-create work");
+    entry.content = '<p>Persisted article.</p><img src="https://93.184.216.34/recovery.png">';
+    entry.annotations = [{ text: "A recovered annotation", quote: "", ranges: [] }];
+    const job = await queue.enqueueNormalizedImport(userId, "wallabag", [entry]);
+    await dbModule.db.$executeRawUnsafe(`CREATE TRIGGER fail_import_tag BEFORE INSERT ON "Tag"
+      WHEN NEW.label = 'post-create-recovered' BEGIN SELECT RAISE(FAIL, 'tag storage unavailable'); END`);
+
+    try {
+      expect(await queue.processImportJob(job.id, { now: new Date("2030-05-05T00:00:00Z") }))
+        .toMatchObject({ status: "pending", imported: 0, skipped: 0 });
+    } finally {
+      await dbModule.db.$executeRawUnsafe('DROP TRIGGER fail_import_tag');
+    }
+    const item = await dbModule.db.importJobItem.findFirstOrThrow({ where: { jobId: job.id } });
+    const beforeRetry = await dbModule.db.entry.findUniqueOrThrow({ where: { id: item.entryId! }, include: { images: true } });
+    expect(beforeRetry.images).toHaveLength(1);
+    const mediaPath = resolve(directory, "media", beforeRetry.images[0].relativePath);
+    const mediaBytes = await readFile(mediaPath);
+
+    expect(await queue.processImportJob(job.id, { now: new Date("2030-05-05T00:01:00Z") }))
+      .toMatchObject({ status: "completed", imported: 1, skipped: 0, failed: 0 });
+    const recovered = await dbModule.db.entry.findUniqueOrThrow({ where: { id: item.entryId! }, include: { images: true, tags: true, annotations: true } });
+    expect(recovered.tags.map(({ label }) => label)).toEqual(["post-create-recovered"]);
+    expect(recovered.images).toEqual(beforeRetry.images);
+    expect(recovered.content).toBe(beforeRetry.content);
+    expect(recovered.annotations.map(({ text }) => text)).toEqual(["A recovered annotation"]);
+    expect(await readFile(mediaPath)).toEqual(mediaBytes);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries image publication failures and removes only unpublished media files", async () => {
+    const png = await sharp({ create: { width: 2, height: 2, channels: 4, background: "#8844aa" } }).png().toBuffer();
+    const fetch = vi.fn(async () => new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } }));
+    vi.stubGlobal("fetch", fetch);
+    await dbModule.db.instanceConfiguration.upsert({ where: { id: "default" }, create: { id: "default", downloadImagesEnabled: true }, update: { downloadImagesEnabled: true } });
+    await dbModule.db.taggingRule.create({ data: { userId, rule: 'title = "Retry image publication"', tags: ["image-recovered"] } });
+    const entry = normalized(`https://93.184.216.34/image-retry-${randomUUID()}`, "Retry image publication");
+    entry.content = '<p>Image publication.</p><img src="https://93.184.216.34/retry.png">';
+    entry.annotations = [{ text: "One image retry note", quote: "", ranges: [] }];
+    const job = await queue.enqueueNormalizedImport(userId, "wallabag", [entry]);
+    await dbModule.db.$executeRawUnsafe(`CREATE TRIGGER fail_import_image BEFORE INSERT ON "EntryImage"
+      BEGIN SELECT RAISE(FAIL, 'image storage unavailable'); END`);
+    try {
+      expect(await queue.processImportJob(job.id, { now: new Date("2030-05-06T00:00:00Z") }))
+        .toMatchObject({ status: "pending", imported: 0, skipped: 0 });
+    } finally {
+      await dbModule.db.$executeRawUnsafe('DROP TRIGGER fail_import_image');
+    }
+    const item = await dbModule.db.importJobItem.findFirstOrThrow({ where: { jobId: job.id } });
+    const beforeRetry = await dbModule.db.entry.findUniqueOrThrow({ where: { id: item.entryId! }, include: { images: true, tags: true } });
+    expect(beforeRetry.images).toEqual([]);
+    expect(beforeRetry.tags).toEqual([]);
+    expect(beforeRetry.content).toContain("https://93.184.216.34/retry.png");
+    expect(await readdir(resolve(directory, "media", userId, item.entryId!))).toEqual([]);
+
+    expect(await queue.processImportJob(job.id, { now: new Date("2030-05-06T00:01:00Z") }))
+      .toMatchObject({ status: "completed", imported: 1, skipped: 0, failed: 0 });
+    const recovered = await dbModule.db.entry.findUniqueOrThrow({ where: { id: item.entryId! }, include: { images: true, tags: true, annotations: true } });
+    expect(recovered.images).toHaveLength(1);
+    expect(recovered.content).toContain(`/media/${recovered.images[0].id}`);
+    expect(recovered.tags.map(({ label }) => label)).toEqual(["image-recovered"]);
+    expect(recovered.annotations.map(({ text }) => text)).toEqual(["One image retry note"]);
+    expect(await readdir(resolve(directory, "media", userId, item.entryId!))).toEqual([basename(recovered.images[0].relativePath)]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("honors disabled image capture during recovery without leaving broken local references", async () => {
+    const png = await sharp({ create: { width: 2, height: 2, channels: 4, background: "#cc8844" } }).png().toBuffer();
+    const fetch = vi.fn(async () => new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } }));
+    vi.stubGlobal("fetch", fetch);
+    await dbModule.db.instanceConfiguration.upsert({ where: { id: "default" }, create: { id: "default", downloadImagesEnabled: true }, update: { downloadImagesEnabled: true } });
+    const imageUrl = "https://93.184.216.34/policy.png";
+    const entry = normalized(`https://93.184.216.34/policy-retry-${randomUUID()}`, "Capture policy recovery");
+    entry.content = `<p>Policy change.</p><picture><source srcset="${imageUrl} 1x"><img src="${imageUrl}"></picture><video poster="${imageUrl}"></video>`;
+    entry.previewPicture = imageUrl;
+    entry.annotations = [{ text: "Pause for capture policy", quote: "", ranges: [] }];
+    const job = await queue.enqueueNormalizedImport(userId, "wallabag", [entry]);
+    await dbModule.db.$executeRawUnsafe(`CREATE TRIGGER fail_policy_annotation BEFORE INSERT ON "Annotation"
+      WHEN NEW.text = 'Pause for capture policy' BEGIN SELECT RAISE(FAIL, 'annotation unavailable'); END`);
+    try {
+      expect(await queue.processImportJob(job.id, { now: new Date("2030-05-07T00:00:00Z") })).toMatchObject({ status: "pending" });
+    } finally {
+      await dbModule.db.$executeRawUnsafe('DROP TRIGGER fail_policy_annotation');
+    }
+    await dbModule.db.instanceConfiguration.update({ where: { id: "default" }, data: { downloadImagesEnabled: false } });
+
+    expect(await queue.processImportJob(job.id, { now: new Date("2030-05-07T00:01:00Z") }))
+      .toMatchObject({ status: "completed", imported: 1, skipped: 0, failed: 0 });
+    const item = await dbModule.db.importJobItem.findFirstOrThrow({ where: { jobId: job.id } });
+    const recovered = await dbModule.db.entry.findUniqueOrThrow({ where: { id: item.entryId! }, include: { images: true } });
+    expect(recovered.images).toEqual([]);
+    expect(recovered.content).not.toContain("/media/");
+    expect(recovered.content).toContain(`src="${imageUrl}"`);
+    expect(recovered.content).toContain(`srcset="${imageUrl} 1x"`);
+    expect(recovered.content).toContain(`poster="${imageUrl}"`);
+    expect(recovered.previewPicture).toBe(imageUrl);
+    expect(await readdir(resolve(directory, "media", userId, item.entryId!))).toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it.each(["page", "error"])("does not let a stale Pocket %s overwrite the replacement claim", async (outcome) => {
