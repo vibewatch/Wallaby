@@ -35,6 +35,32 @@ describe("Extractor", () => {
     expect(content.html).toContain("Offline article");
   });
 
+  it("cleans prefetched content without logging in or following publisher pagination", async () => {
+    const extractor = new Extractor({
+      fetcher: { async fetch() { throw new Error("Prefetched content must not make network requests"); } },
+      siteConfigs: {
+        "private.example.txt": [
+          "requires_login: yes",
+          "login_uri: /session",
+          "login_username_field: username",
+          "login_password_field: password",
+          "body: //div[@class='publisher-wrapper']",
+          "next_page_link: //a[@rel='next']",
+          "single_page_link: //a[@rel='alternate']",
+        ].join("\n"),
+      },
+    });
+    const content = await extractor.fetchContent(
+      "https://private.example/story",
+      '<p>Saved content without publisher wrappers.</p><a rel="next" href="/next">Next</a><script>unsafe()</script>',
+      { username: "reader", password: "secret" },
+    );
+    expect(content.html).toContain("Saved content without publisher wrappers");
+    expect(content.html).not.toContain("<script");
+    expect(content.isNotParsed).toBe(false);
+    expect(content.nextPageUrl).toBeNull();
+  });
+
   it("uses a fingerprint site config when the requested host has no exact config", async () => {
     const fetcher: Fetcher = {
       async fetch(url) {
@@ -116,6 +142,29 @@ describe("Extractor", () => {
     expect(content.html).not.toContain("Page 3 chapter");
   });
 
+  it("keeps the first page and reports a transport failure during a multipage walk", async () => {
+    const warnings: string[] = [];
+    const extractor = new Extractor({
+      fetcher: {
+        async fetch(url) {
+          const page = Number(url.searchParams.get("page") ?? 1);
+          if (page === 3) throw new Error("The connection closed");
+          return htmlResponse(url, `<article><p>Page ${page} content.</p></article><a rel="next" href="?page=${page + 1}">Next</a>`);
+        },
+      },
+      logger: { debug() {}, info() {}, error() {}, warn(message) { warnings.push(message); } },
+      siteConfigs: { "example.com.txt": "body: //article\nnext_page_link: //a[@rel='next']" },
+    });
+    const content = await extractor.fetchContent("https://example.com/series?page=1");
+
+    expect(content.html).toContain("Page 1 content");
+    expect(content.html).not.toContain("Page 2 content");
+    expect(content.html).toContain("subsequent pages which we could not extract");
+    expect(content.nextPageUrl).toBe("https://example.com/series?page=3");
+    expect(content.isNotParsed).toBe(false);
+    expect(warnings).toContain("extractor.pagination.interrupted");
+  });
+
   it("logs in with site-config fields and carries cookies to the article request", async () => {
     const requests: { url: string; request?: FetchRequestOptions }[] = [];
     const fetcher: Fetcher = {
@@ -161,14 +210,16 @@ describe("Extractor", () => {
       async fetch(url, _headers, request) {
         requests.push({ path: url.pathname, request });
         if (url.pathname === "/session" && request?.method !== "POST") {
-          return htmlResponse(url, '<form><input name="csrf" value="xpath-token"></form>');
+          return { ...htmlResponse(url, '<form><input name="csrf" value="xpath-token"></form>'), setCookies: ["prelogin=csrf-session; Path=/; Secure; HttpOnly"] };
         }
         if (url.pathname === "/nonce") {
-          return htmlResponse(url, '<script>window.config={"security":"regex-token"}</script>');
+          expect(request?.cookies).toContain("prelogin=csrf-session");
+          return { ...htmlResponse(url, '<script>window.config={"security":"regex-token"}</script>'), setCookies: ["nonce=ready; Path=/; Secure"] };
         }
         if (url.pathname === "/session") {
           expect(request?.body).toContain("csrf=xpath-token");
           expect(request?.body).toContain("security=regex-token");
+          expect(request?.cookies).toEqual(expect.arrayContaining(["prelogin=csrf-session", "nonce=ready"]));
           return { ...htmlResponse(url, "logged in"), setCookies: ["session=dynamic"] };
         }
         expect(request?.cookies).toContain("session=dynamic");

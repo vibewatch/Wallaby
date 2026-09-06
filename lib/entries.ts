@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import type { Prisma } from "@prisma/client";
+import type { Content } from "@wallaby/extractor";
 
 import { localizeEntryImages } from "@/lib/article-images";
 import { db } from "@/lib/db";
@@ -44,7 +45,11 @@ export async function createEntry(userId: string, input: EntryInput) {
   return (await createEntryWithResult(userId, input)).entry;
 }
 
-export async function createEntryWithResult(userId: string, input: EntryInput) {
+export async function createEntryWithResult(
+  userId: string,
+  input: EntryInput,
+  onCreate?: (transaction: Prisma.TransactionClient, entryId: string) => Promise<void>,
+) {
   const normalized = new URL(input.url.match(/^https?:\/\//i) ? input.url : `https://${input.url}`);
   const givenUrl = normalized.toString();
   const existing = await db.entry.findUnique({
@@ -53,7 +58,7 @@ export async function createEntryWithResult(userId: string, input: EntryInput) {
   });
   if (existing) return { entry: existing, created: false as const };
 
-  let extracted;
+  let extracted: Content | undefined;
   let extractionError: string | null = null;
   try {
     const credential = input.content ? undefined : await findSiteCredential(userId, normalized.hostname);
@@ -73,7 +78,7 @@ export async function createEntryWithResult(userId: string, input: EntryInput) {
     create: { userId, label, slug: slugify(label) || hashUrl(label).slice(0, 12) },
   }));
 
-  const created = await db.entry.create({
+  const persist = (client: Prisma.TransactionClient) => client.entry.create({
     data: {
       userId,
       uid: randomBytes(12).toString("base64url").slice(0, 23),
@@ -104,6 +109,14 @@ export async function createEntryWithResult(userId: string, input: EntryInput) {
     },
     include: { tags: true, annotations: true },
   });
+  // An import's provenance must commit with its entry, before any post-save work.
+  const created = onCreate
+    ? await db.$transaction(async (transaction) => {
+        const entry = await persist(transaction);
+        await onCreate(transaction, entry.id);
+        return entry;
+      })
+    : await persist(db);
   try { await localizeEntryImages(created.id); }
   catch { /* Image capture is best-effort; the sanitized remote references remain readable. */ }
   await applyTaggingRules(userId, created.id);

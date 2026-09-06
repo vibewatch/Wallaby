@@ -27,13 +27,15 @@ export async function GET(request: Request, { params }: Context) {
   // "Export results" has to reproduce what the library showed, so the same
   // search layer resolves the text query here. Ordering stays newest-first: a
   // downloaded archive reads by date, not by relevance to a since-closed query.
-  const ranked = filters.query ? await rankedEntryIds(session.user.id, filters.query) : null;
-  const where = entryWhere(session.user.id, filters, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null, ranked);
   const explicitId = query.get("id");
+  const candidateWhere = entryWhere(session.user.id, { ...filters, query: "" }, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null);
+  if (explicitId) candidateWhere.id = explicitId;
+  const ranked = filters.query ? await rankedEntryIds(session.user.id, filters.query, candidateWhere) : null;
+  const where = entryWhere(session.user.id, filters, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null, ranked);
   // Combined rather than overwritten so `?id=` narrows the filtered set instead
   // of escaping it.
   if (explicitId) where.id = typeof where.id === "object" && where.id !== null ? { ...where.id, equals: explicitId } : explicitId;
-  const entries = await db.entry.findMany({ where, include: { tags: true, annotations: true }, orderBy: { createdAt: "desc" } });
+  const entries = await db.entry.findMany({ where, include: { tags: true, annotations: true, images: format === "epub" }, orderBy: { createdAt: "desc" } });
   const output = binaryFormats.includes(format as BinaryExportFormat)
     ? await renderBinaryExport(entries, format as BinaryExportFormat)
     : renderExport(entries, format as TextExportFormat);

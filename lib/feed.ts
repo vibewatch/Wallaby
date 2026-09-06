@@ -1,14 +1,15 @@
 import type { Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
+import { pageNumber } from "@/lib/pagination";
 
 export async function renderPrivateFeed(request: Request, input: { username: string; token: string; view?: string; tag?: string; page?: string }) {
   const user = await db.user.findUnique({ where: { username: input.username }, include: { preference: true } });
   if (!user?.preference || user.preference.feedToken !== input.token) return new Response("Feed not found", { status: 404 });
   const view = input.tag ? "tags" : input.view ?? "all";
   if (!input.tag && !["all", "unread", "archive", "starred"].includes(view)) return new Response("Feed not found", { status: 404 });
-  const page = Math.max(1, Number(input.page ?? 1) || 1);
   const limit = Math.min(Math.max(user.preference.feedLimit, 1), 1_000);
+  const page = pageNumber(input.page, limit);
   const where: Prisma.EntryWhereInput = {
     userId: user.id,
     archived: view === "unread" ? false : view === "archive" ? true : undefined,
@@ -25,17 +26,17 @@ export async function renderPrivateFeed(request: Request, input: { username: str
   const url = new URL(request.url);
   const title = input.tag ? `Wallaby · tag #${input.tag}` : `Wallaby · ${view}`;
   const format = url.searchParams.get("format")?.toLowerCase() === "rss" ? "rss" : "atom";
-  return format === "rss" ? rssResponse(entries, title, url) : atomResponse(entries, title, url, page, pages);
+  return format === "rss" ? rssResponse(entries, title, url) : atomResponse(entries, title, url, page, pages, input.page !== undefined);
 }
 
 type FeedEntry = Awaited<ReturnType<typeof db.entry.findMany>>[number];
 
-function atomResponse(entries: FeedEntry[], title: string, url: URL, page: number, pages: number): Response {
+function atomResponse(entries: FeedEntry[], title: string, url: URL, page: number, pages: number, hasPageSegment: boolean): Response {
   const updated = entries[0]?.updatedAt ?? new Date(0);
   const pageUrl = (target: number) => {
     const next = new URL(url);
     const segments = next.pathname.split("/").filter(Boolean);
-    if (/^\d+$/.test(segments.at(-1) ?? "")) segments.pop();
+    if (hasPageSegment) segments.pop();
     if (target > 1) segments.push(String(target));
     next.pathname = `/${segments.join("/")}`;
     return next.toString();

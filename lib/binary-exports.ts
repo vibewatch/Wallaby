@@ -1,15 +1,22 @@
 import fontkit from "@pdf-lib/fontkit";
+import type { EntryImage } from "@prisma/client";
 import { strToU8, zipSync } from "fflate";
 import { JSDOM } from "jsdom";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PDFDocument, type PDFFont, type PDFPage, rgb } from "pdf-lib";
+import sharp from "sharp";
 
+import { readEntryImage } from "@/lib/article-images";
 import type { ExportEntry } from "@/lib/exports";
 
 export type BinaryExportFormat = "epub" | "pdf";
+export type BinaryExportEntry = ExportEntry & {
+  images?: Pick<EntryImage, "id" | "userId" | "entryId" | "contentType" | "relativePath">[];
+};
 
 type BinaryExport = { body: Uint8Array; contentType: string };
+type EpubImage = { id: string; filename: string; contentType: string; bytes: Uint8Array };
 
 const fontPath = join(process.cwd(), "node_modules", "@fontsource", "unifont", "files", "unifont-latin-400-normal.woff2");
 let fontBytesPromise: Promise<Uint8Array> | undefined;
@@ -32,6 +39,7 @@ const EPUB_TAGS = new Set([
   "span", "strong", "sub", "summary", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "time", "tr", "u", "ul", "var",
 ]);
 const EPUB_VOID_TAGS = new Set(["br", "hr", "img"]);
+const EPUB_IMAGE_EXTENSIONS = new Map([["image/png", "png"], ["image/jpeg", "jpg"], ["image/gif", "gif"]]);
 const BLOCK_TAGS = new Set([
   "address", "article", "aside", "blockquote", "dd", "details", "div", "dl", "dt", "figcaption", "figure", "footer", "h1", "h2",
   "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "summary", "table", "tr", "ul",
@@ -39,24 +47,25 @@ const BLOCK_TAGS = new Set([
 const INVALID_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g;
 const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
-export async function renderBinaryExport(entries: ExportEntry[], format: BinaryExportFormat): Promise<BinaryExport> {
-  if (format === "epub") return { body: renderEpub(entries), contentType: "application/epub+zip" };
+export async function renderBinaryExport(entries: BinaryExportEntry[], format: BinaryExportFormat): Promise<BinaryExport> {
+  if (format === "epub") return { body: await renderEpub(entries), contentType: "application/epub+zip" };
   return { body: await renderPdf(entries), contentType: "application/pdf" };
 }
 
-export function renderEpub(entries: ExportEntry[]): Uint8Array {
-  const chapters = entries.length
-    ? entries.map((entry, index) => renderEpubChapter(entry, index + 1))
-    : [{ id: "empty", filename: "empty.xhtml", title: "No saved entries", remoteResources: false, body: emptyChapter() }];
+export async function renderEpub(entries: BinaryExportEntry[]): Promise<Uint8Array> {
+  const chapters = [];
+  for (const [index, entry] of entries.entries()) chapters.push(await renderEpubChapter(entry, index + 1));
+  if (!chapters.length) chapters.push({ id: "empty", filename: "empty.xhtml", title: "No saved entries", remoteResources: false, body: emptyChapter(), images: [] });
   const title = entries.length === 1 ? entries[0].title : `Wallaby library (${entries.length} entries)`;
   const modified = latestUpdatedAt(entries).toISOString().replace(/\.\d{3}Z$/, "Z");
   const identifier = entries.length === 1 ? `urn:wallaby:entry:${entries[0].id}` : `urn:wallaby:library:${entries.map(({ id }) => id).join("-") || "empty"}`;
   const language = commonLanguage(entries);
   const creators = [...new Set(entries.flatMap(entryAuthors))].slice(0, 100);
 
-  const manifest = chapters.map((chapter) =>
-    `<item id="${chapter.id}" href="${chapter.filename}" media-type="application/xhtml+xml"${chapter.remoteResources ? ' properties="remote-resources"' : ""}/>`
-  ).join("\n    ");
+  const manifest = chapters.flatMap((chapter) => [
+    `<item id="${chapter.id}" href="${chapter.filename}" media-type="application/xhtml+xml"${chapter.remoteResources ? ' properties="remote-resources"' : ""}/>`,
+    ...chapter.images.map((image) => `<item id="${image.id}" href="${image.filename}" media-type="${image.contentType}"/>`),
+  ]).join("\n    ");
   const spine = chapters.map((chapter) => `<itemref idref="${chapter.id}"/>`).join("\n    ");
   const creatorMetadata = creators.map((creator) => `<dc:creator>${xml(creator)}</dc:creator>`).join("\n    ");
   const navigation = chapters.map((chapter) => `<li><a href="${chapter.filename}">${xml(chapter.title)}</a></li>`).join("\n        ");
@@ -96,7 +105,10 @@ export function renderEpub(entries: ExportEntry[]): Uint8Array {
 </html>`),
     "OEBPS/styles.css": strToU8(EPUB_STYLE),
   };
-  for (const chapter of chapters) files[`OEBPS/${chapter.filename}`] = strToU8(chapter.body);
+  for (const chapter of chapters) {
+    files[`OEBPS/${chapter.filename}`] = strToU8(chapter.body);
+    for (const image of chapter.images) files[`OEBPS/${image.filename}`] = [image.bytes, { level: 0 }];
+  }
   return zipSync(files, { level: 6 });
 }
 
@@ -232,12 +244,12 @@ function wrapPdfText(value: string, maxWidth: number, measure: (value: string) =
   return lines;
 }
 
-function renderEpubChapter(entry: ExportEntry, position: number) {
+async function renderEpubChapter(entry: BinaryExportEntry, position: number) {
   const id = `chapter-${position}`;
   const filename = `${id}.xhtml`;
   const language = validLanguage(entry.language);
   const authors = entryAuthors(entry);
-  const body = xhtmlFragment(entry.content);
+  const { body, images } = await xhtmlFragment(entry, position);
   const meta = [
     authors.length ? `<p>By ${xml(authors.join(", "))}</p>` : "",
     entry.publishedAt ? `<p>Published: ${entry.publishedAt.toISOString()}</p>` : "",
@@ -250,6 +262,7 @@ function renderEpubChapter(entry: ExportEntry, position: number) {
     id,
     filename,
     title: entry.title,
+    images,
     remoteResources: /<img\b[^>]+\bsrc="https?:/i.test(body),
     body: `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -269,18 +282,36 @@ function emptyChapter(): string {
 </html>`;
 }
 
-function xhtmlFragment(html: string): string {
-  const document = new JSDOM(`<main>${html}</main>`).window.document;
+async function xhtmlFragment(entry: BinaryExportEntry, position: number): Promise<{ body: string; images: EpubImage[] }> {
+  const document = new JSDOM(`<main>${entry.content}</main>`).window.document;
   const root = document.querySelector("main")!;
-  return [...root.childNodes].map(serializeXhtmlNode).join("");
+  const records = new Map((entry.images ?? [])
+    .filter((image) => image.userId === entry.userId && image.entryId === entry.id)
+    .map((image) => [`/media/${image.id}`, image]));
+  const images = new Map<string, EpubImage>();
+  for (const element of root.querySelectorAll("img[src]")) {
+    const source = element.getAttribute("src")!;
+    if (!source.startsWith("/media/") || images.has(source)) continue;
+    const image = records.get(source);
+    if (!image) throw new Error(`Cannot export EPUB: saved image not found for entry ${entry.id}`);
+    const convertToPng = image.contentType === "image/webp" || image.contentType === "image/avif";
+    const contentType = convertToPng ? "image/png" : image.contentType;
+    const extension = EPUB_IMAGE_EXTENSIONS.get(contentType);
+    if (!extension) throw new Error(`Cannot export EPUB: unsupported saved image type ${image.contentType}`);
+    const stored = await readEntryImage(image.relativePath);
+    const bytes = convertToPng ? await sharp(stored).png().toBuffer() : stored;
+    const id = `image-${position}-${images.size + 1}`;
+    images.set(source, { id, filename: `images/${id}.${extension}`, contentType, bytes });
+  }
+  return { body: [...root.childNodes].map((node) => serializeXhtmlNode(node, images)).join(""), images: [...images.values()] };
 }
 
-function serializeXhtmlNode(node: Node): string {
+function serializeXhtmlNode(node: Node, images: Map<string, EpubImage>): string {
   if (node.nodeType === 3) return xml(node.nodeValue ?? "");
   if (node.nodeType !== 1) return "";
   const element = node as Element;
   const tag = element.tagName.toLowerCase();
-  const children = [...element.childNodes].map(serializeXhtmlNode).join("");
+  const children = [...element.childNodes].map((child) => serializeXhtmlNode(child, images)).join("");
   if (!EPUB_TAGS.has(tag)) return children;
   const attributes: string[] = [];
   for (const name of ["id", "class", "title", "lang", "dir", "datetime", "colspan", "rowspan", "alt", "width", "height"]) {
@@ -292,7 +323,8 @@ function serializeXhtmlNode(node: Node): string {
     if (href) attributes.push(`href="${xml(href)}"`);
   }
   if (tag === "img") {
-    const src = safeUrl(element.getAttribute("src"), false);
+    const source = element.getAttribute("src");
+    const src = images.get(source ?? "")?.filename ?? safeUrl(source, false);
     if (!src) return element.getAttribute("alt") ? `<span>${xml(element.getAttribute("alt")!)}</span>` : "";
     attributes.push(`src="${xml(src)}"`);
   }

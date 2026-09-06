@@ -1,7 +1,7 @@
 "use client";
 
 import { Keyboard, X } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -23,6 +23,8 @@ const CARD_SELECTOR = "[data-entry-card]";
  */
 export function KeyboardShortcuts() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [helpOpen, setHelpOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -43,8 +45,8 @@ export function KeyboardShortcuts() {
 
   // The sidebar's Search link carries ?focus=search; honour it on arrival.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("focus") === "search") focusSearch();
-  }, [focusSearch]);
+    if (searchParams.get("focus") === "search") focusSearch();
+  }, [focusSearch, pathname, searchParams]);
 
   // <dialog> is driven imperatively so it gets the native focus trap, inert
   // background, and Escape handling instead of hand-rolled equivalents.

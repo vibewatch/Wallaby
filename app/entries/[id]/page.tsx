@@ -53,7 +53,7 @@ export default async function EntryPage({ params }: PageProps) {
   const readingTime = Math.max(1, Math.ceil(entry.readingTime * 200 / (preference?.readingSpeed ?? 200)));
   return (
     <div className="reader-page">
-      <ReadingProgress entryId={entry.id} initialProgress={entry.readingProgress} archiveOnFinish={preference?.actionMarkAsRead ?? false} />
+      <ReadingProgress key={entry.id} entryId={entry.id} initialProgress={entry.readingProgress} archiveOnFinish={preference?.actionMarkAsRead ?? false} />
       <header className="reader-toolbar">
         <Link href="/entries" className="back-link"><ArrowLeft size={17} /> Library</Link>
         <div className="reader-actions">

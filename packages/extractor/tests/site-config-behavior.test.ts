@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { ConfigBuilder, ContentExtractor } from "../src";
+import { ConfigBuilder, ContentExtractor, Extractor } from "../src";
 import { loadSiteConfigDirectory } from "../src/node";
 
 // Load the REAL 2,037-config corpus once and drive extraction with it, proving
@@ -17,6 +17,77 @@ const filler =
   "This is a substantial paragraph of genuine article prose that Readability and the site-config body rule should both recognize as the primary content of the page. ".repeat(6);
 
 describe("real site configs drive extraction", () => {
+  it("global.txt: applies attribute stripping only after class-based extraction", () => {
+    const config = new ConfigBuilder({
+      "global.txt": corpus["global.txt"],
+      "class-selection.example.txt": [
+        "title: //h1[@class='headline']",
+        "date: //time[@class='published']",
+        "author: //div[@class='authors']",
+        "body: //div[@class='article-body']",
+      ].join("\n"),
+    }).buildForHost("class-selection.example");
+    const html = `<html><head><title>Wrong browser title</title></head><body>
+      <h1 class="headline">The configured headline</h1>
+      <time class="published">2024-02-03T10:20:00Z</time>
+      <div class="authors">Ada Reader</div>
+      <div class="article-body"><p class="publisher-prose">Complete saved article.</p></div>
+    </body></html>`;
+    const result = extractor.process(html, new URL("https://class-selection.example/story"), config, options);
+
+    expect(result.title).toBe("The configured headline");
+    expect(result.authors).toEqual(["Ada Reader"]);
+    expect(result.date).toBe("2024-02-03T10:20:00.000Z");
+    expect(result.html).toBe("<p>Complete saved article.</p>");
+    expect(result.isSuccess).toBe(true);
+  });
+
+  it("16personalities.com: extracts a string-valued body XPath from JSON-LD", () => {
+    const config = builder.buildForHost("16personalities.com");
+    const html = `<html><head>
+      <meta property="og:title" content="A personality article | 16Personalities">
+      <script type="application/ld+json">${JSON.stringify({
+        "@type": "Article",
+        articleBody: "<p>Personality traits can be explored thoughtfully.</p>",
+        inLanguage: "en",
+        datePublished: "2024-02-03T10:20:00Z",
+        dateModified: "2024-02-04T10:20:00Z",
+      })}</script>
+    </head><body></body></html>`;
+    const result = extractor.process(html, new URL("https://www.16personalities.com/articles/example"), config, options);
+
+    expect(result.title).toBe("A personality article");
+    expect(result.html).toBe("<p>Personality traits can be explored thoughtfully.</p>");
+    expect(result.isSuccess).toBe(true);
+  });
+
+  it("ze.tt: importing an extracted article preserves its content without publisher wrappers", async () => {
+    let requests = 0;
+    const engine = new Extractor({
+      siteConfigs: corpus,
+      fetcher: {
+        async fetch(url) {
+          requests += 1;
+          return {
+            url: url.toString(),
+            status: 200,
+            headers: { "content-type": "text/html" },
+            mimeType: "text/html",
+            body: '<h1 class="ph-article-title">Saved headline</h1><div class="ph-article-text-body"><p>Complete saved article.</p></div>',
+          };
+        },
+      },
+    });
+    const original = await engine.fetchContent("https://ze.tt/story");
+    expect(original.html).toBe("<p>Complete saved article.</p>");
+    const imported = await engine.fetchContent("https://ze.tt/story", original.html);
+    expect(imported.html).toBe(original.html);
+    expect(imported.isNotParsed).toBe(false);
+    engine.setContentAsPrefetched(original.html);
+    expect((await engine.fetchContent("https://ze.tt/story")).html).toBe(original.html);
+    expect(requests).toBe(1);
+  });
+
   it("Wikipedia: selects #firstHeading title, #bodyContent body, and strips the TOC + editsection", () => {
     const config = builder.buildForHost("en.wikipedia.org");
     const html = `<!doctype html><html lang="en"><head><title>Wrong — browser tab title</title></head>

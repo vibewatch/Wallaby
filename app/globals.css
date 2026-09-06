@@ -214,7 +214,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .advanced-filter-actions a { color: var(--quiet); font-size: .62rem; }
 .results-line { margin: 0 2px 9px; display: flex; justify-content: space-between; color: var(--quiet); font-size: .62rem; letter-spacing: .05em; text-transform: uppercase; }
 .results-line a { display: inline-flex; align-items: center; gap: 5px; color: var(--forest); }
-.bulk-toolbar { margin: 0 0 10px; padding: 8px; display: flex; align-items: end; justify-content: flex-end; gap: 7px; background: var(--wash); border: 1px solid var(--line); border-radius: 5px; }
+.bulk-toolbar { margin: 0 0 10px; padding: 8px; display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 7px; background: var(--wash); border: 1px solid var(--line); border-radius: 5px; }
 .bulk-toolbar label { display: grid; gap: 3px; }
 .bulk-toolbar label span { color: var(--quiet); font-size: .54rem; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
 .bulk-toolbar select, .bulk-toolbar input { min-height: 32px; padding: 6px 8px; color: var(--ink); background: var(--white); border: 1px solid var(--line-strong); border-radius: 4px; font-size: .64rem; }
@@ -563,6 +563,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .status-page small { margin-top: 12px; color: var(--quiet); font: .68rem ui-monospace, monospace; }
 .status-page > div { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 10px; }
 .status-page a, .status-page button { text-decoration: none; }
+
+.inline-confirmation { flex-basis: 100%; min-width: 0; padding: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--error-ink); background: var(--danger-wash); border: 1px solid var(--danger-line); border-radius: 5px; font-size: .74rem; }
+.inline-confirmation p { flex: 1 1 220px; margin: 0; overflow-wrap: anywhere; }
+.inline-confirmation > div { display: flex; gap: 7px; }
+.inline-confirmation button { width: auto; height: auto; min-height: 32px; padding: 7px 10px; color: var(--ink); background: var(--white); border: 1px solid var(--line-strong); border-radius: 4px; font-size: .67rem; font-weight: 700; }
+.inline-confirmation button:last-child { color: var(--on-accent); background: var(--danger); border-color: var(--danger); }
+.reader-toolbar:has(.inline-confirmation) { height: auto; min-height: 56px; padding-top: 12px; padding-bottom: 12px; align-items: flex-start; gap: 16px; }
+.reader-actions:has(.inline-confirmation) { max-width: 440px; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
 
 /* Toasts */
 .toast-viewport { position: fixed; z-index: 8; bottom: 22px; left: 50%; display: grid; gap: 8px; justify-items: center; transform: translateX(-50%); pointer-events: none; }

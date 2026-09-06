@@ -30,7 +30,7 @@ export async function GET(request: Request, { params }: Context) {
   const textFormats: TextExportFormat[] = ["json", "csv", "xml", "txt", "md"];
   const binaryFormats: BinaryExportFormat[] = ["epub", "pdf"];
   if (![...textFormats, ...binaryFormats].includes(format as TextExportFormat | BinaryExportFormat)) return apiError(404, "not_found", "Export format not found");
-  const entries = await db.entry.findMany({ where: { id, userId }, include: { tags: true, annotations: true } });
+  const entries = await db.entry.findMany({ where: { id, userId }, include: { tags: true, annotations: true, images: format === "epub" } });
   if (!entries.length) return apiError(404, "not_found", "Entry not found");
   const output = binaryFormats.includes(format as BinaryExportFormat)
     ? await renderBinaryExport(entries, format as BinaryExportFormat)

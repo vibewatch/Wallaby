@@ -39,6 +39,24 @@ describe("portable library importers", () => {
     expect(entries[0].createdAt?.getUTCFullYear()).toBe(2023);
   });
 
+  it.each([
+    { source: "pocket" as const, filename: "pocket.html" },
+    { source: "pocket" as const, filename: "uploaded-export" },
+    { source: "auto" as const, filename: "pocket.html" },
+    { source: "auto" as const, filename: "export.html" },
+  ])("preserves Pocket HTML state and timestamps with $source detection for $filename", ({ source, filename }) => {
+    const entries = parseImport(source, filename, `<!DOCTYPE html><html><head><title>Pocket Export</title></head><body>
+      <h1>Unread</h1><ul><li><a href="https://example.com/unread" time_added="1700000000" tags="news,tech">Unread story</a></li></ul>
+      <h1>Read Archive</h1><ul><li><a href="https://example.com/archived" time_added="1700000010" tags="reference">Finished story</a></li></ul>
+    </body></html>`);
+
+    expect(entries).toMatchObject([
+      { url: "https://example.com/unread", title: "Unread story", tags: ["news", "tech"], archived: false },
+      { url: "https://example.com/archived", title: "Finished story", tags: ["reference"], archived: true },
+    ]);
+    expect(entries.map((entry) => entry.createdAt?.toISOString())).toEqual(["2023-11-14T22:13:20.000Z", "2023-11-14T22:13:30.000Z"]);
+  });
+
   it("reads Netscape browser bookmark HTML", () => {
     const entries = parseImport("browser", "bookmarks.html", '<!DOCTYPE NETSCAPE-Bookmark-file-1><a href="https://example.com/bookmark" add_date="1700000000" tags="reference,web">Bookmark</a>');
     expect(entries[0]).toMatchObject({ title: "Bookmark", tags: ["reference", "web"] });

@@ -37,8 +37,8 @@ export type NormalizedImportAnnotation = {
 
 export function parseImport(source: ImportSource, filename: string, input: string): NormalizedImportEntry[] {
   const resolvedSource = source === "auto" ? detectSource(filename, input) : source;
-  const records = resolvedSource === "browser" || resolvedSource === "shaarli"
-    ? parseBookmarkHtml(input)
+  const records = resolvedSource === "browser" || resolvedSource === "shaarli" || (resolvedSource === "pocket" && isHtmlInput(filename, input))
+    ? parseBookmarkHtml(input, resolvedSource === "pocket")
     : resolvedSource === "wallabag" || resolvedSource === "pinboard" || resolvedSource === "omnivore" || resolvedSource === "readability" || resolvedSource === "elcurator"
       ? parseJsonRecords(input)
       : parseCsv(input);
@@ -54,7 +54,9 @@ function detectSource(filename: string, input: string): ImportSource {
   if (lower.includes("shaarli") || /shaarli export of all bookmarks/i.test(trimmed)) return "shaarli";
   if (lower.includes("readability")) return "readability";
   if (lower.includes("elcurator")) return "elcurator";
-  if (lower.endsWith(".html") || lower.endsWith(".htm") || /<!doctype\s+netscape-bookmark-file/i.test(trimmed)) return "browser";
+  if (isHtmlInput(filename, input)) {
+    return lower.includes("pocket") || /<a\b[^>]*\btime_added\s*=|<title[^>]*>\s*pocket\b/i.test(input) ? "pocket" : "browser";
+  }
   if (lower.includes("instapaper")) return "instapaper";
   if (lower.includes("pocket")) return "pocket";
   if (lower.includes("omnivore")) return "omnivore";
@@ -86,14 +88,30 @@ function parseJsonRecords(input: string): Record<string, unknown>[] {
   return [parsed];
 }
 
-function parseBookmarkHtml(input: string): Record<string, unknown>[] {
+function isHtmlInput(filename: string, input: string): boolean {
+  return /\.html?$/i.test(filename) || input.trimStart().startsWith("<");
+}
+
+function parseBookmarkHtml(input: string, pocket = false): Record<string, unknown>[] {
   const document = new JSDOM(input).window.document;
-  return [...document.querySelectorAll<HTMLAnchorElement>("a[href]")].map((anchor) => ({
-    url: anchor.href,
-    title: anchor.textContent?.trim(),
-    tags: anchor.getAttribute("tags"),
-    created_at: anchor.getAttribute("add_date"),
-  }));
+  const records: Record<string, unknown>[] = [];
+  let archived = false;
+  for (const element of document.querySelectorAll(pocket ? "h1, h2, h3, a[href]" : "a[href]")) {
+    if (element.tagName !== "A") {
+      const heading = element.textContent?.trim() ?? "";
+      if (/^unread\b/i.test(heading)) archived = false;
+      else if (/^(?:read\s+)?archiv(?:e|ed)\b|^read$/i.test(heading)) archived = true;
+      continue;
+    }
+    records.push({
+      url: element.getAttribute("href"),
+      title: element.textContent?.trim(),
+      tags: element.getAttribute("tags"),
+      created_at: element.getAttribute("time_added") ?? element.getAttribute("add_date"),
+      is_archived: pocket ? archived : undefined,
+    });
+  }
+  return records;
 }
 
 export function parseCsv(input: string): Record<string, string>[] {

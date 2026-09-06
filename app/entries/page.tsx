@@ -9,6 +9,7 @@ import { bulkUpdateEntries } from "@/lib/actions";
 import { requireUser } from "@/lib/auth-user";
 import { db } from "@/lib/db";
 import { advancedFilterNames, entryWhere, parseEntryFilters } from "@/lib/entry-filters";
+import { pageNumber } from "@/lib/pagination";
 import { findEntryPage, rankedEntryIds, tokenizeSearch } from "@/lib/search";
 
 export const metadata: Metadata = { title: "Library" };
@@ -30,7 +31,6 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
   const params = await searchParams;
   const filters = parseEntryFilters(params);
   const { view, query, tag, sourceEntryId, domain, language } = filters;
-  const page = Math.max(1, Number(typeof params.page === "string" ? params.page : 1) || 1);
   const [preference, sourceEntry] = await Promise.all([
     db.userPreference.findUnique({ where: { userId: user.id } }),
     view === "same-domain" && sourceEntryId
@@ -38,15 +38,17 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
       : null,
   ]);
   const pageSize = Math.min(preference?.itemsPerPage ?? 20, 100);
+  const page = pageNumber(typeof params.page === "string" ? params.page : undefined, pageSize);
 
   // Resolving the text query first lets the index rank the candidates; a null
   // result means there is no index and the predicate falls back to substrings.
-  const ranked = query ? await rankedEntryIds(user.id, query) : null;
+  const candidateWhere = entryWhere(user.id, { ...filters, query: "" }, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null);
+  const ranked = query ? await rankedEntryIds(user.id, query, candidateWhere) : null;
   const where = entryWhere(user.id, filters, preference?.readingSpeed ?? 200, sourceEntry?.domainName ?? null, ranked);
   const highlight = query ? tokenizeSearch(query) : null;
 
   const [{ entries, total }, selectedTag, languageRows] = await Promise.all([
-    findEntryPage({ where, ranked, page, pageSize }),
+    findEntryPage({ where, ranked, page, pageSize, includeContent: Boolean(query) }),
     tag ? db.tag.findFirst({ where: { userId: user.id, slug: tag } }) : null,
     db.entry.findMany({ where: { userId: user.id, language: { not: null } }, distinct: ["language"], select: { language: true }, orderBy: { language: "asc" } }),
   ]);
@@ -101,8 +103,8 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
           <div className="advanced-filter-actions"><Link href={clearFilterUrl(view, tag, sourceEntryId)}>Clear filters</Link><button className="secondary-button">Apply filters</button></div>
         </form>
       </details>
-      <div className="results-line"><span>{total} {total === 1 ? "entry" : "entries"}</span><span>{ranked ? "Most relevant first" : "Newest first"}</span>{view !== "same-domain" ? <Link href={randomUrl(view, tag)}><Shuffle size={13} /> Read a random entry</Link> : null}<Link href={exportUrl(params)}><Download size={13} /> Export results</Link></div>
-      {entries.length ? <ActionForm action={bulkUpdateEntries} id="bulk-entries" className="bulk-toolbar">
+      <div className="results-line"><span>{total} {total === 1 ? "entry" : "entries"}</span><span>{ranked ? "Most relevant first" : "Newest first"}</span><Link href={resultsUrl("/entries/random", params)}><Shuffle size={13} /> Read a random entry</Link><Link href={resultsUrl("/export/json", params)}><Download size={13} /> Export results</Link></div>
+      {entries.length ? <ActionForm action={bulkUpdateEntries} id="bulk-entries" className="bulk-toolbar" confirmation={{ field: "action", value: "delete", message: "Delete the selected entries? This removes their saved copies and cannot be undone." }}>
         <label><span>Selected entries</span><select name="action" defaultValue="toggle-read" aria-label="Bulk action">
           <option value="toggle-read">Toggle read / unread</option>
           <option value="toggle-star">Toggle star</option>
@@ -144,12 +146,6 @@ function pageUrl(params: Record<string, string | string[] | undefined>, page: nu
   return `/entries?${query}`;
 }
 
-function randomUrl(view: string, tag: string): string {
-  const query = new URLSearchParams({ view });
-  if (tag) query.set("tag", tag);
-  return `/entries/random?${query}`;
-}
-
 function stringValue(value: string | string[] | undefined): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -161,8 +157,9 @@ function clearFilterUrl(view: string, tag: string, entry: string): string {
   return `/entries?${query}`;
 }
 
-function exportUrl(params: Record<string, string | string[] | undefined>): string {
+function resultsUrl(path: string, params: Record<string, string | string[] | undefined>): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) if (typeof value === "string" && key !== "page") query.set(key, value);
-  return `/export/json?${query}`;
+  query.set("view", parseEntryFilters(params).view);
+  return `${path}?${query}`;
 }

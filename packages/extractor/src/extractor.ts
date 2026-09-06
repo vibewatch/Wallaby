@@ -3,7 +3,8 @@ import { ContentExtractor, type ContentExtractorOptions } from "./content-extrac
 import { HttpFetcher } from "./fetcher";
 import { evaluateLoginExpression } from "./login-expression";
 import { extractPdf } from "./pdf";
-import type { Content, ContentTypeAction, ExtractedContent, FetchResult, ExtractorLogger, ExtractorOptions, SiteCredential } from "./types";
+import type { Content, ContentTypeAction, ExtractedContent, FetchRequestOptions, FetchResult, ExtractorLogger, ExtractorOptions, HeadersRecord, SiteCredential } from "./types";
+import { SiteConfig } from "./types";
 import { normalizeUrl } from "./url";
 
 const defaultContentTypeActions: Record<string, ContentTypeAction> = {
@@ -99,10 +100,11 @@ export class Extractor {
     }
     this.logger.debug("extractor.fetch.start", { host: requestedUrl.hostname, prefetched: prefetchedContent !== undefined, authenticated: Boolean(credential) });
     let siteConfig = this.configBuilder.buildFromUrl(requestedUrl);
-    let cookies = credential ? await this.login(requestedUrl, siteConfig, credential) : [];
     const prefetched = prefetchedContent ?? (this.prefetchedContent === null ? null : this.takePrefetchedContent());
+    const cookies = new CookieJar();
+    if (prefetched === null && credential) await this.login(requestedUrl, siteConfig, credential, cookies);
     let fetched = prefetched === null
-      ? await this.fetcher.fetch(requestedUrl, siteConfig.http_header, { cookies })
+      ? await this.fetchWithCookies(requestedUrl, siteConfig.http_header, cookies)
       : {
           body: prefetched,
           url: requestedUrl.toString(),
@@ -110,7 +112,6 @@ export class Extractor {
           headers: { "content-type": "text/html" },
           mimeType: "text/html",
         };
-    cookies = fetched.setCookies ?? cookies;
     let effectiveUrl = normalizeUrl(fetched.url);
 
     if (
@@ -119,9 +120,8 @@ export class Extractor {
       siteConfig.requires_login &&
       this.extractor.hasXPathMatch(fetched.body, effectiveUrl, siteConfig.not_logged_in_xpath)
     ) {
-      cookies = await this.login(effectiveUrl, siteConfig, credential);
-      fetched = await this.fetcher.fetch(effectiveUrl, siteConfig.http_header, { cookies });
-      cookies = fetched.setCookies ?? cookies;
+      await this.login(effectiveUrl, siteConfig, credential, cookies);
+      fetched = await this.fetchWithCookies(effectiveUrl, siteConfig.http_header, cookies);
       effectiveUrl = normalizeUrl(fetched.url);
     }
 
@@ -179,15 +179,18 @@ export class Extractor {
       return this.mimeContent(fetched, "Download", `<a href="${escaped}">Download file</a>`);
     }
 
-    if (siteConfig.autodetectOnFailure()) {
+    if (prefetched !== null) {
+      siteConfig = new SiteConfig();
+      siteConfig.body = ["//body"];
+    } else if (siteConfig.autodetectOnFailure()) {
       const fingerprintHost = this.extractor.findHostUsingFingerprints(fetched.body, this.options.fingerprints);
       if (fingerprintHost) siteConfig = mergeSiteConfig(siteConfig, this.configBuilder.buildForHost(fingerprintHost));
     }
 
     let extracted = this.extractor.process(fetched.body, effectiveUrl, siteConfig, this.extractorOptions());
-    if (this.options.singlePage && extracted.singlePageUrl && normalizeUrl(extracted.singlePageUrl).toString() !== effectiveUrl.toString()) {
+    if (prefetched === null && this.options.singlePage && extracted.singlePageUrl && normalizeUrl(extracted.singlePageUrl).toString() !== effectiveUrl.toString()) {
       const singleUrl = normalizeUrl(extracted.singlePageUrl);
-      fetched = await this.fetcher.fetch(singleUrl, this.configBuilder.buildFromUrl(singleUrl).http_header, { cookies });
+      fetched = await this.fetchWithCookies(singleUrl, this.configBuilder.buildFromUrl(singleUrl).http_header, cookies);
       effectiveUrl = normalizeUrl(fetched.url);
       extracted = this.extractor.process(
         fetched.body,
@@ -196,7 +199,7 @@ export class Extractor {
         this.extractorOptions(),
       );
     }
-    if (this.options.multiPage && extracted.nextPageUrl) {
+    if (prefetched === null && this.options.multiPage && extracted.nextPageUrl) {
       extracted = await this.fetchRemainingPages(extracted, fetched.url, cookies);
     }
     const content = {
@@ -253,7 +256,7 @@ export class Extractor {
     return this.options.contentTypeActions[normalized] ?? this.options.contentTypeActions[type] ?? null;
   }
 
-  private async fetchRemainingPages(first: ExtractedContent, firstUrl: string, cookies: string[]): Promise<ExtractedContent> {
+  private async fetchRemainingPages(first: ExtractedContent, firstUrl: string, cookies: CookieJar): Promise<ExtractedContent> {
     const visited = new Set([normalizeUrl(firstUrl).toString()]);
     const extraPages: string[] = [];
     let next = first.nextPageUrl;
@@ -266,7 +269,15 @@ export class Extractor {
       if (visited.has(pageUrl.toString())) { interrupted = true; break; }
       visited.add(pageUrl.toString());
       const config = this.configBuilder.buildFromUrl(pageUrl);
-      const fetched: FetchResult = await this.fetcher.fetch(pageUrl, config.http_header, { cookies });
+      let fetched: FetchResult;
+      try {
+        fetched = await this.fetchWithCookies(pageUrl, config.http_header, cookies);
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        this.logger.warn("extractor.pagination.interrupted", { host: pageUrl.hostname, errorType: error.name });
+        interrupted = true;
+        break;
+      }
       const effective = normalizeUrl(fetched.url);
       if (this.mimeAction(fetched.mimeType)) { interrupted = true; break; }
       const extracted = this.extractor.process(fetched.body, effective, config, this.extractorOptions());
@@ -290,13 +301,23 @@ export class Extractor {
     };
   }
 
-  private async login(url: URL, config: ReturnType<ConfigBuilder["buildFromUrl"]>, credential: SiteCredential): Promise<string[]> {
+  private async fetchWithCookies(url: URL, headers: HeadersRecord, cookieJar: CookieJar, request: FetchRequestOptions = {}): Promise<FetchResult> {
+    const fetched = await this.fetcher.fetch(url, headers, {
+      ...request,
+      cookies: cookieJar.getCookiesSync(url.toString()).map((cookie) => cookie.cookieString()),
+      cookieJar,
+    });
+    for (const cookie of fetched.setCookies ?? []) cookieJar.setCookieSync(cookie, fetched.url, { ignoreError: true });
+    return fetched;
+  }
+
+  private async login(url: URL, config: ReturnType<ConfigBuilder["buildFromUrl"]>, credential: SiteCredential, cookies: CookieJar): Promise<void> {
     if (
       !config.requires_login ||
       !config.login_uri ||
       !config.login_username_field ||
       !config.login_password_field
-    ) return [];
+    ) return;
 
     this.logger.debug("extractor.login.start", { host: url.hostname, extraFieldCount: config.login_extra_fields.length });
 
@@ -315,20 +336,21 @@ export class Extractor {
           loginUri: config.login_uri,
           requestHtml: async (input) => {
             const target = normalizeUrl(new URL(input, url));
-            const fetched = await this.fetcher.fetch(target, this.configBuilder.buildFromUrl(target).http_header);
+            const fetched = await this.fetchWithCookies(target, this.configBuilder.buildFromUrl(target).http_header, cookies);
             return fetched.body;
           },
         });
       }
       body.set(name, value);
     }
-    const response = await this.fetcher.fetch(
-      normalizeUrl(new URL(config.login_uri, url)),
+    const loginUrl = normalizeUrl(new URL(config.login_uri, url));
+    const response = await this.fetchWithCookies(
+      loginUrl,
       { ...config.http_header, "content-type": "application/x-www-form-urlencoded" },
+      cookies,
       { method: "POST", body: body.toString() },
     );
-    this.logger.info("extractor.login.complete", { host: url.hostname, status: response.status, cookieCount: response.setCookies?.length ?? 0 });
-    return response.setCookies ?? [];
+    this.logger.info("extractor.login.complete", { host: url.hostname, status: response.status, cookieCount: cookies.getCookiesSync(loginUrl.toString()).length });
   }
 
   private mimeContent(
@@ -389,3 +411,4 @@ function normalizeContentTypeActions(overrides?: Record<string, ContentTypeActio
   }
   return normalized;
 }
+import { CookieJar } from "jsdom";

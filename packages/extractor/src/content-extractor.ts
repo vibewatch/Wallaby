@@ -80,7 +80,6 @@ export class ContentExtractor {
       const clean = value.replace(/["']/g, "");
       for (const image of document.querySelectorAll("img")) if (image.getAttribute("src")?.includes(clean)) image.remove();
     }
-    for (const pattern of siteConfig.post_strip_attr) removeAttributeNodes(document, pattern);
     for (const element of document.querySelectorAll(".entry-unrelated, .instapaper_ignore, [style*='display:none'], [style*='visibility:hidden']")) element.remove();
     // strip empty <a> elements (no child elements and no text)
     for (const anchor of [...document.querySelectorAll("a")]) {
@@ -166,7 +165,7 @@ export class ContentExtractor {
     const image = absoluteUrl(metadata.image, url);
 
     const preparedBody = body ?? "";
-    const cleaned = preparedBody ? cleanupHtml(preparedBody, url, options, finalTitle) : "";
+    const cleaned = preparedBody ? cleanupHtml(preparedBody, url, options, finalTitle, siteConfig.post_strip_attr) : "";
     const summary = excerpt(new JSDOM(cleaned).window.document.body.textContent ?? "");
 
     return {
@@ -329,7 +328,10 @@ function evaluate(document: Document, pattern: string, context: Node = document)
 }
 
 function evaluateNodes(document: Document, pattern: string, context: Node = document): Node[] {
-  const result = evaluate(document, pattern, context);
+  return evaluateResultNodes(evaluate(document, pattern, context));
+}
+
+function evaluateResultNodes(result: XPathResult | null): Node[] {
   if (!result) return [];
   const nodes: Node[] = [];
   if (result.resultType === 4 || result.resultType === 5) {
@@ -340,14 +342,14 @@ function evaluateNodes(document: Document, pattern: string, context: Node = docu
       const node = result.snapshotItem(index);
       if (node) nodes.push(node);
     }
-  } else if (result.singleNodeValue) nodes.push(result.singleNodeValue);
+  } else if ((result.resultType === 8 || result.resultType === 9) && result.singleNodeValue) nodes.push(result.singleNodeValue);
   return nodes;
 }
 
 function evaluateResultFirstNode(result: XPathResult): Node | null {
   if (result.resultType === 4 || result.resultType === 5) return result.iterateNext();
   if (result.resultType === 6 || result.resultType === 7) return result.snapshotItem(0);
-  return result.singleNodeValue;
+  return result.resultType === 8 || result.resultType === 9 ? result.singleNodeValue : null;
 }
 
 function firstNode(document: Document, pattern: string, context: Node = document): Node | null {
@@ -396,7 +398,13 @@ function firstStrings(document: Document, patterns: string[]): string[] {
 
 function firstBody(document: Document, patterns: string[]): string | null {
   for (const pattern of patterns) {
-    const nodes = evaluateNodes(document, pattern);
+    const result = evaluate(document, pattern);
+    if (result?.resultType === 2) {
+      const value = result.stringValue.trim();
+      if (value) return value;
+      continue;
+    }
+    const nodes = evaluateResultNodes(result);
     if (!nodes.length) continue;
     if (nodes.length === 1 && nodes[0] instanceof document.defaultView!.Element) {
       return (nodes[0] as Element).outerHTML;
@@ -489,9 +497,10 @@ function removeLeadingTitleHeading(root: Element, title: string | null): void {
   }
 }
 
-function cleanupHtml(html: string, base: URL, options: ContentExtractorOptions, title: string | null = null): string {
+function cleanupHtml(html: string, base: URL, options: ContentExtractorOptions, title: string | null = null, postStripAttributes: string[] = []): string {
   const dom = new JSDOM(`<main id="wallaby-content">${html}</main>`, { url: base.toString() });
   let root: Element = dom.window.document.querySelector("#wallaby-content")!;
+  for (const pattern of postStripAttributes) removeAttributeNodes(dom.window.document, pattern);
   for (const element of root.querySelectorAll<HTMLElement>("[style], [srcdoc]")) {
     element.removeAttribute("style");
     element.removeAttribute("srcdoc");

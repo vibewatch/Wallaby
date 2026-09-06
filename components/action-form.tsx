@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 
+import { ConfirmForm } from "@/components/confirm-form";
 import { useToast } from "@/components/toast";
 import type { ActionResult } from "@/lib/toast";
 
@@ -15,6 +16,7 @@ type Props = {
   children: React.ReactNode;
   className?: string;
   id?: string;
+  confirmation?: { field: string; value: string; message: string };
 };
 
 /**
@@ -22,7 +24,7 @@ type Props = {
  * keeps the plain form submission working without JavaScript while giving the
  * client the result to announce once it is available.
  */
-export function ActionForm({ action, children, className, id }: Props) {
+export function ActionForm({ action, children, className, id, confirmation }: Props) {
   const [state, formAction] = useActionState(action, null);
   const toast = useToast();
 
@@ -30,5 +32,7 @@ export function ActionForm({ action, children, className, id }: Props) {
     if (state) toast(state);
   }, [state, toast]);
 
-  return <form action={formAction} className={className} id={id}>{children}</form>;
+  return confirmation
+    ? <ConfirmForm action={formAction} className={className} id={id} confirm={confirmation.message} confirmWhen={confirmation}>{children}</ConfirmForm>
+    : <form action={formAction} className={className} id={id}>{children}</form>;
 }

@@ -13,9 +13,9 @@ The repository is evidence-driven about its wallabag compatibility surface. The 
 - Ranked full-text search with prefix and quoted-phrase matching, highlighted result snippets, and a portable substring fallback
 - Responsive article reader, tags, notes, archive/star/refetch/delete actions, and public share links
 - Light, dark, and system-following themes applied before first paint
-- Per-entry reading progress with a resume prompt, and a keyboard layer covering navigation, entry actions, and reader controls
+- Per-entry reading progress with reconnect retries and a resume prompt, and a keyboard layer covering navigation, entry actions, and reader controls
 - Installable as a progressive web app with an offline shell that never caches saved articles
-- Toast feedback with undo for archive, star, and bulk actions, and confirmation on irreversible ones
+- Toast feedback with undo for archive, star, and bulk actions, and inline confirmation for individual and bulk entry deletion
 - Per-user reading preferences, private Atom feed tokens, and hashed bearer API tokens
 - Profile, password, scoped data-reset, cross-browser session revocation, and account-deletion workflows
 - Administrator user/role/password management and instance-wide redirect-origin policy
@@ -24,9 +24,11 @@ The repository is evidence-driven about its wallabag compatibility surface. The 
 - A wallabag-shaped JSON API for entries, search, tags, annotations, configuration, and instance information
 - A standalone TypeScript extraction engine with 2,037 CC0 site configs, XPath rules, metadata, Readability, multipage handling, sanitization, and SSRF-aware fetching
 
+Library ranked searches return up to 500 matching entries after applying the selected view and advanced filters. Exports and random reading use the same filtered candidates. Ordinary library cards load metadata rather than full article bodies; article content is fetched for the reader and search snippets.
+
 ## Local setup
 
-Requirements: Node.js 20.9 or newer and npm 10 or newer.
+Requirements: Node.js 22.12 or newer and npm 10 or newer. The container and CI use Node.js 24.
 
 ```bash
 cp .env.example .env
@@ -63,7 +65,7 @@ Imports are stored before article processing begins. In the supported SQLite pro
 npm run import:worker
 ```
 
-`npm run import:worker:once` claims at most one available job, which is useful for schedulers. Stale claims are recovered after five minutes and every job/item has a bounded retry budget. Pocket OAuth tokens use `POCKET_TOKEN_KEY` when set, or a domain-separated key derived from a strong `AUTH_SECRET`, and are removed after remote pagination finishes.
+`npm run import:worker:once` claims at most one available job, which is useful for schedulers. Jobs are published atomically with their initial items and options. Active claims renew every 30 seconds; abandoned claims are recovered after five minutes, and stale workers cannot publish further results. Every job/item has a bounded retry budget. Pocket OAuth tokens use `POCKET_TOKEN_KEY` when set, or a domain-separated key derived from a strong `AUTH_SECRET`, and are removed after remote pagination finishes.
 
 The operator command surface uses the same persistence and extraction boundaries as the web application:
 
@@ -84,7 +86,7 @@ OAuth2 applications can also be created and revoked under **Settings → API acc
 
 The extraction engine has focused tests under `packages/extractor/tests`, and `npm run test:site-configs` reconciles the complete site-config corpus. The extraction-contract map and remaining fixture work are recorded in [the extraction engine map](docs/EXTRACTOR.md).
 
-Downloaded article images are opt-in under Administration. Set `WALLABY_MEDIA_DIR` to a persistent writable volume before enabling the policy. Wallaby re-encodes supported raster images, applies instance byte/count/pixel quotas, and serves content-addressed immutable responses from `/media/:id`. Use `npm run images:cleanup -- --dry-run` to audit orphaned files, then omit `--dry-run` to reconcile the store.
+Downloaded article images are opt-in under Administration. Set `WALLABY_MEDIA_DIR` to a persistent writable volume before enabling the policy. Wallaby re-encodes supported raster images, applies instance byte/count/pixel quotas, and serves content-addressed immutable responses from `/media/:id`. EPUB exports include downloaded images; ordinary remote images still require connectivity. Use `npm run images:cleanup -- --dry-run` to audit orphaned files, then omit `--dry-run` to reconcile the store.
 
 ## Extractor usage
 

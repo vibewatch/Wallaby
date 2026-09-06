@@ -8,6 +8,15 @@ const articleText = `
 `.repeat(4);
 
 describe("ContentExtractor", () => {
+  it("skips non-node XPath results when a later selector can supply the content", () => {
+    const config = parseSiteConfig("title: false()\ntitle: //h1\nbody: count(//article)\nbody: //article\nstrip: true()");
+    const result = new ContentExtractor().process("<h1>Typed XPath results</h1><article><p>The later body rule still works.</p></article>", new URL("https://example.com/story"), config);
+
+    expect(result.title).toBe("Typed XPath results");
+    expect(result.html).toBe("<p>The later body rule still works.</p>");
+    expect(result.isSuccess).toBe(true);
+  });
+
   it("prefers site-config XPath rules and cleans the selected article", () => {
     const html = `<!doctype html><html lang="en"><head>
       <title>Fallback title</title>

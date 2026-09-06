@@ -3,6 +3,7 @@
 import { ArrowUp, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useToast } from "@/components/toast";
 import { clampProgress, progressPercent, shouldResume } from "@/lib/reading-progress";
 
 /** How often an actively scrolling reader writes progress back to the server. */
@@ -23,6 +24,7 @@ type Props = {
  * a server component; this only reads its geometry via `[data-reading-target]`.
  */
 export function ReadingProgress({ entryId, initialProgress, archiveOnFinish }: Props) {
+  const toast = useToast();
   const [progress, setProgress] = useState(clampProgress(initialProgress));
   const [dismissed, setDismissed] = useState(false);
   const saved = useRef(clampProgress(initialProgress));
@@ -33,17 +35,17 @@ export function ReadingProgress({ entryId, initialProgress, archiveOnFinish }: P
   const resuming = shouldResume(initialProgress) && !dismissed;
 
   const persist = useCallback((value: number, beacon: boolean) => {
-    if (Math.abs(value - saved.current) < SAVE_DELTA && value !== 1) return;
-    saved.current = value;
+    if (value === saved.current || (Math.abs(value - saved.current) < SAVE_DELTA && value !== 1)) return;
     const body = JSON.stringify({ progress: value, archive: archiveOnFinish });
     const url = `/api/entries/${entryId}/progress`;
     // A page being unloaded cannot await fetch; sendBeacon survives teardown.
-    if (beacon && typeof navigator !== "undefined" && navigator.sendBeacon) {
-      navigator.sendBeacon(url, new Blob([body], { type: "application/json" }));
-      return;
-    }
-    void fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
-  }, [archiveOnFinish, entryId]);
+    if (beacon && typeof navigator !== "undefined" && navigator.sendBeacon?.(url, new Blob([body], { type: "application/json" }))) return;
+    const failed = () => toast({ message: "Reading progress could not be saved. It will retry when you reconnect or continue reading.", tone: "danger" });
+    void fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).then((response) => {
+      if (response.ok) saved.current = value;
+      else failed();
+    }, failed);
+  }, [archiveOnFinish, entryId, toast]);
 
   useEffect(() => {
     const target = document.querySelector<HTMLElement>("[data-reading-target]");
@@ -74,10 +76,12 @@ export function ReadingProgress({ entryId, initialProgress, archiveOnFinish }: P
       persist(latest.current, true);
     };
     const onVisibility = () => { if (document.visibilityState === "hidden") onLeave(); };
+    const onOnline = () => persist(latest.current, false);
 
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onScroll, { passive: true });
     window.addEventListener("pagehide", onLeave);
+    window.addEventListener("online", onOnline);
     document.addEventListener("visibilitychange", onVisibility);
 
     // Restore before the first scroll event so the reader lands where they
@@ -95,6 +99,7 @@ export function ReadingProgress({ entryId, initialProgress, archiveOnFinish }: P
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
       window.removeEventListener("pagehide", onLeave);
+      window.removeEventListener("online", onOnline);
       document.removeEventListener("visibilitychange", onVisibility);
       onLeave();
     };

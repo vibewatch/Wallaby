@@ -1,14 +1,15 @@
 import { authenticateApiRequest, unauthorized } from "@/lib/api-auth";
 import { db } from "@/lib/db";
 import { serializeEntry } from "@/lib/entry-serializer";
+import { pageNumber, positiveInteger } from "@/lib/pagination";
 
 export async function GET(request: Request) {
   const userId = await authenticateApiRequest(request);
   if (!userId) return unauthorized();
   const params = new URL(request.url).searchParams;
   const term = params.get("term")?.trim() ?? "";
-  const page = positiveInteger(params.get("page"), 1);
   const perPage = Math.min(100, positiveInteger(params.get("perPage") ?? params.get("per_page") ?? params.get("limit"), 30));
+  const page = pageNumber(params.get("page"), perPage);
   const where = {
     userId,
     ...(term ? { OR: [{ title: { contains: term } }, { content: { contains: term } }, { url: { contains: term } }, { tags: { some: { label: { contains: term } } } }] } : {}),
@@ -38,11 +39,6 @@ export async function GET(request: Request) {
       ...(page < pages ? { next: { href: pageLink(request, page + 1, perPage) } } : {}),
     },
   });
-}
-
-function positiveInteger(value: string | null, fallback: number): number {
-  const number = Number(value ?? fallback);
-  return Number.isInteger(number) && number > 0 ? number : fallback;
 }
 
 function pageLink(request: Request, page: number, perPage: number): string {

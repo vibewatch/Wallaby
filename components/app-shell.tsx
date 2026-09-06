@@ -1,5 +1,6 @@
 import { Archive, BookOpenText, CircleHelp, CircleUserRound, Clock3, Highlighter, Import, Library, LogOut, Search, Settings, Shield, Star, Tags } from "lucide-react";
 import Link from "next/link";
+import { Suspense } from "react";
 
 import { logout } from "@/lib/actions";
 import { KeyboardShortcuts } from "@/components/keyboard-shortcuts";
@@ -69,7 +70,7 @@ export function AppShell({ children, user, theme, counts, tags }: AppShellProps)
           <ThemeToggle theme={theme} />
         </aside>
         <main className="main-stage">{children}</main>
-        <KeyboardShortcuts />
+        <Suspense fallback={null}><KeyboardShortcuts /></Suspense>
       </div>
     </ToastProvider>
   );

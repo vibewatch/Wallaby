@@ -131,6 +131,15 @@ describe("rankedEntryIds", () => {
 describe("findEntryPage", () => {
   const parsed = (query: string) => filters.parseEntryFilters({ view: "all", q: query });
 
+  it("omits article bodies from ordinary cards but retains content for search snippets", async () => {
+    const args = { where: { userId: readerId, id: ids.bodied }, ranked: null, page: 1, pageSize: 20 };
+    const ordinary = await search.findEntryPage(args);
+    expect(ordinary.entries[0]).not.toHaveProperty("content");
+    expect(ordinary.entries[0]).not.toHaveProperty("headers");
+    const searched = await search.findEntryPage({ ...args, includeContent: true });
+    expect(searched.entries[0].content).toContain("portable copies of the web");
+  });
+
   it("returns the page in relevance order with a matching total", async () => {
     const ranked = await search.rankedEntryIds(readerId, "portable");
     const where = filters.entryWhere(readerId, parsed("portable"), 200, null, ranked);
@@ -151,6 +160,40 @@ describe("findEntryPage", () => {
     await dbModule.db.entry.update({ where: { id: ids.titled }, data: { archived: false } });
   });
 
+  it.each([
+    { view: "same-domain", domain: "bodies.example" },
+    { view: "untagged", tag: "portable" },
+  ])("does not broaden the $view view when an extra filter conflicts", async (query) => {
+    const where = filters.entryWhere(readerId, filters.parseEntryFilters(query), 200, "titles.example");
+    const page = await search.findEntryPage({ where, ranked: null, page: 1, pageSize: 20 });
+    expect(page).toMatchObject({ total: 0, entries: [] });
+  });
+
+  it.each([
+    { minRead: "2", maxRead: "2", expected: [2, 3] },
+    { minRead: "1", maxRead: "1", expected: [0, 1] },
+    { minRead: "0", maxRead: "0.5", expected: [] },
+    { minRead: "2.2", maxRead: "3", expected: [4] },
+  ])("filters the displayed reading minutes between $minRead and $maxRead", async ({ minRead, maxRead, expected }) => {
+    const user = await dbModule.db.user.create({ data: { username: `speed-${minRead}-${maxRead}` } });
+    try {
+      await dbModule.db.entry.createMany({ data: [0, 1, 2, 3, 4].map((readingTime) => ({
+        userId: user.id,
+        title: `Reading time ${readingTime}`,
+        url: `https://speed.example/${readingTime}`,
+        givenUrl: `https://speed.example/${readingTime}`,
+        urlHash: String(readingTime),
+        content: "<p>Reading at 300 words per minute.</p>",
+        readingTime,
+      })) });
+      const where = filters.entryWhere(user.id, filters.parseEntryFilters({ view: "all", minRead, maxRead }), 300, null);
+      const page = await search.findEntryPage({ where, ranked: null, page: 1, pageSize: 20 });
+      expect(page.entries.map((entry) => entry.readingTime).sort((a, b) => a - b)).toEqual(expected);
+    } finally {
+      await dbModule.db.user.delete({ where: { id: user.id } });
+    }
+  });
+
   it("falls back to newest-first when nothing ranked the results", async () => {
     const where = filters.entryWhere(readerId, parsed(""), 200, null, null);
     const page = await search.findEntryPage({ where, ranked: null, page: 1, pageSize: 3 });
@@ -164,5 +207,23 @@ describe("findEntryPage", () => {
     const where = filters.entryWhere(readerId, parsed("nonexistent"), 200, null, []);
     const page = await search.findEntryPage({ where, ranked: [], page: 1, pageSize: 20 });
     expect(page).toMatchObject({ total: 0, entries: [] });
+  });
+});
+
+describe("portable search fallback", () => {
+  it("still searches the library when the full-text index is unavailable", async () => {
+    await dbModule.db.$executeRaw`ALTER TABLE "EntrySearch" RENAME TO "UnavailableEntrySearch"`;
+    search.resetSearchEngine();
+    try {
+      await expect(search.searchEngine()).resolves.toBe("scan");
+      const ranked = await search.rankedEntryIds(readerId, "portable");
+      expect(ranked).toBeNull();
+      const where = filters.entryWhere(readerId, filters.parseEntryFilters({ view: "all", q: "portable" }), 200, null, ranked);
+      const page = await search.findEntryPage({ where, ranked, page: 1, pageSize: 20 });
+      expect(page.entries.map((entry) => entry.id).sort()).toEqual([ids.titled, ids.bodied, ids.tagged].sort());
+    } finally {
+      await dbModule.db.$executeRaw`ALTER TABLE "UnavailableEntrySearch" RENAME TO "EntrySearch"`;
+      search.resetSearchEngine();
+    }
   });
 });

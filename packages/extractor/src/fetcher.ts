@@ -44,8 +44,10 @@ export class HttpFetcher implements Fetcher {
   constructor(private readonly options: HttpFetcherOptions) {}
 
   async fetch(url: URL, headers: HeadersRecord = {}, request: FetchRequestOptions = {}): Promise<FetchResult> {
-    const cookieJar = new Map<string, string>();
-    for (const cookie of request.cookies ?? []) putCookie(cookieJar, cookie);
+    const cookieJar = request.cookieJar ?? new CookieJar();
+    if (!request.cookieJar) {
+      for (const cookie of request.cookies ?? []) cookieJar.setCookieSync(cookie, url.toString(), { ignoreError: true });
+    }
     const cleanUrl = this.cleanupUrl(url);
     const baseHeaders = lowerCaseKeys(headers);
 
@@ -53,7 +55,8 @@ export class HttpFetcher implements Fetcher {
     // fetches. Login POSTs and any request carrying an explicit body/cookies or
     // a caller-provided user-agent go straight through unchanged.
     const method = request.method ?? "GET";
-    const eligibleForChain = method === "GET" && !request.body && !baseHeaders["user-agent"] && (this.options.botProfiles || this.options.browserRender);
+    const hasCredentials = Boolean(request.cookies?.length || cookieJar.getCookieStringSync(cleanUrl.toString()) || baseHeaders.cookie || baseHeaders.authorization);
+    const eligibleForChain = method === "GET" && !request.body && !hasCredentials && !baseHeaders["user-agent"] && (this.options.botProfiles || this.options.browserRender);
     if (!eligibleForChain) {
       return this.request(cleanUrl, baseHeaders, request, 0, cookieJar, 0);
     }
@@ -62,7 +65,7 @@ export class HttpFetcher implements Fetcher {
   }
 
   // origin -> rotating search-bot/browser profiles -> headless browser render.
-  private async fetchWithChain(url: URL, baseHeaders: HeadersRecord, request: FetchRequestOptions, cookieJar: Map<string, string>): Promise<FetchResult> {
+  private async fetchWithChain(url: URL, baseHeaders: HeadersRecord, request: FetchRequestOptions, cookieJar: CookieJar): Promise<FetchResult> {
     const attempts: HeadersRecord[] = [baseHeaders];
     if (this.options.botProfiles) {
       for (const profile of SEARCH_BOT_PROFILES) attempts.push({ ...baseHeaders, ...lowerCaseKeys(profile.headers) });
@@ -71,7 +74,7 @@ export class HttpFetcher implements Fetcher {
     let firstChallenge: unknown = null;
     for (const headers of attempts) {
       try {
-        const result = await this.request(url, headers, request, 0, new Map(cookieJar), 0);
+        const result = await this.request(url, headers, request, 0, cookieJar, 0);
         if (this.isChallengeResult(result)) {
           firstChallenge ??= new FetchHttpError(result.status || 403, url.toString());
           continue;
@@ -93,7 +96,7 @@ export class HttpFetcher implements Fetcher {
           status: status || 200,
           headers: { "content-type": "text/html" },
           mimeType: "text/html",
-          setCookies: [...cookieJar.values()],
+          setCookies: request.cookieJar ? undefined : cookieJar.getCookiesSync(url.toString()).map((cookie) => cookie.cookieString()),
         };
       }
       firstChallenge ??= new FetchHttpError(status || 403, url.toString());
@@ -137,10 +140,11 @@ export class HttpFetcher implements Fetcher {
     headers: HeadersRecord,
     request: FetchRequestOptions,
     redirects: number,
-    cookieJar: Map<string, string>,
+    cookieJar: CookieJar,
     metaRefreshes: number,
   ): Promise<FetchResult> {
     await assertPublicUrl(url);
+    const cookies = cookieJar.getCookieStringSync(url.toString());
 
     const response = await fetch(url, {
       headers: {
@@ -148,7 +152,7 @@ export class HttpFetcher implements Fetcher {
         "accept-language": "en,*;q=0.5",
         "user-agent": this.userAgent(url, headers),
         referer: this.options.defaultReferer ?? defaultReferer,
-        ...(cookieJar.size ? { cookie: [...cookieJar.values()].join("; ") } : {}),
+        ...(cookies ? { cookie: cookies } : {}),
         ...headers,
       },
       method: request.method ?? "GET",
@@ -158,16 +162,21 @@ export class HttpFetcher implements Fetcher {
     });
 
     const responseCookies = (response.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
-    for (const cookie of responseCookies) putCookie(cookieJar, cookie);
+    for (const cookie of responseCookies) cookieJar.setCookieSync(cookie, url.toString(), { ignoreError: true });
 
     if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
       const location = response.headers.get("location");
       if (!location) throw new Error(`Redirect response ${response.status} did not include a Location header`);
       if (redirects >= this.options.maxRedirects) throw new Error("Too many redirects while fetching article");
       const preservePost = response.status === 307 || response.status === 308;
+      const target = this.cleanupUrl(new URL(location, url));
+      if (preservePost && request.method === "POST" && request.body && target.origin !== url.origin) {
+        throw new Error("Refusing to forward a POST body across origins");
+      }
       return this.request(
-        this.cleanupUrl(new URL(location, url)),
-        headers,
+        target,
+        redirectHeaders(headers, url, target),
         preservePost ? request : { ...request, method: "GET", body: undefined },
         redirects + 1,
         cookieJar,
@@ -179,8 +188,9 @@ export class HttpFetcher implements Fetcher {
     const refresh = response.headers.get("refresh");
     const refreshUrl = refresh ? /[0-9];\s*url=["']?([^"'>]+)/i.exec(refresh)?.[1] : undefined;
     if (refreshUrl && metaRefreshes < this.options.maxRedirects) {
-      await response.body?.cancel().catch(() => {});
-      return this.request(this.cleanupUrl(new URL(refreshUrl.replace(/&amp;/g, "&"), url)), headers, { ...request, method: "GET", body: undefined }, redirects, cookieJar, metaRefreshes + 1);
+      await response.body?.cancel();
+      const target = this.cleanupUrl(new URL(refreshUrl.replace(/&amp;/g, "&"), url));
+      return this.request(target, redirectHeaders(headers, url, target), { ...request, method: "GET", body: undefined }, redirects, cookieJar, metaRefreshes + 1);
     }
 
     const declaredLength = Number(response.headers.get("content-length") ?? 0);
@@ -217,7 +227,8 @@ export class HttpFetcher implements Fetcher {
       const head = decodeBody(bytes.slice(0, 50_000), contentType);
       const metaRefresh = findMetaRefreshUrl(head, new URL(responseUrl));
       if (metaRefresh) {
-        return this.request(this.cleanupUrl(metaRefresh), headers, { ...request, method: "GET", body: undefined }, redirects, cookieJar, metaRefreshes + 1);
+        const target = this.cleanupUrl(metaRefresh);
+        return this.request(target, redirectHeaders(headers, url, target), { ...request, method: "GET", body: undefined }, redirects, cookieJar, metaRefreshes + 1);
       }
     }
 
@@ -228,13 +239,18 @@ export class HttpFetcher implements Fetcher {
       status: response.status,
       headers: Object.fromEntries([...response.headers.entries()].filter(([name]) => name.toLowerCase() !== "set-cookie")),
       mimeType,
-      setCookies: [...cookieJar.values()],
+      setCookies: request.cookieJar ? undefined : cookieJar.getCookiesSync(responseUrl).map((cookie) => cookie.cookieString()),
     };
   }
 }
 
 function lowerCaseKeys(headers: HeadersRecord): HeadersRecord {
   return Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
+}
+
+function redirectHeaders(headers: HeadersRecord, source: URL, target: URL): HeadersRecord {
+  if (source.origin === target.origin) return headers;
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => !["authorization", "proxy-authorization", "cookie"].includes(name.toLowerCase())));
 }
 
 function isBotChallenge(error: unknown): boolean {
@@ -299,9 +315,4 @@ export function decodeBody(bytes: Uint8Array, contentType = ""): string {
   }
 }
 
-function putCookie(jar: Map<string, string>, setCookie: string): void {
-  const pair = setCookie.split(";", 1)[0]?.trim();
-  const separator = pair?.indexOf("=") ?? -1;
-  if (!pair || separator <= 0) return;
-  jar.set(pair.slice(0, separator).trim(), pair);
-}
+import { CookieJar } from "jsdom";

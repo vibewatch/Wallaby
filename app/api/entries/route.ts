@@ -9,13 +9,14 @@ import { db } from "@/lib/db";
 import { serializeEntry } from "@/lib/entry-serializer";
 import { createEntry, parseTags, slugify } from "@/lib/entries";
 import { getExtractor } from "@/lib/extractor";
+import { pageNumber, positiveInteger } from "@/lib/pagination";
 
 export async function GET(request: Request) {
   const userId = await authenticateApiRequest(request);
   if (!userId) return unauthorized();
   const params = new URL(request.url).searchParams;
-  const page = positiveInteger(params.get("page"), 1);
   const perPage = Math.min(100, positiveInteger(params.get("perPage") ?? params.get("per_page") ?? params.get("limit"), 30));
+  const page = pageNumber(params.get("page"), perPage);
   const where: Prisma.EntryWhereInput = { userId };
   if (params.has("archive")) where.archived = params.get("archive") === "1";
   if (params.has("starred")) where.starred = params.get("starred") === "1";
@@ -145,11 +146,6 @@ const apiFlag = z.union([z.boolean(), z.number(), z.string()]).transform((value,
   context.addIssue({ code: z.ZodIssueCode.custom, message: "Expected a boolean or 0/1" });
   return z.NEVER;
 });
-
-function positiveInteger(value: string | null, fallback: number): number {
-  const number = Number(value ?? fallback);
-  return Number.isInteger(number) && number > 0 ? number : fallback;
-}
 
 function pageLink(request: Request, page: number, perPage: number): string {
   const url = new URL(request.url);

@@ -4,8 +4,8 @@ import { deleteEntriesWithMedia } from "@/lib/article-images";
 import { db } from "@/lib/db";
 import { createEntryWithResult, parseTags, reloadEntry } from "@/lib/entries";
 import { renderExport, type TextExportFormat } from "@/lib/exports";
-import { enqueueImportFile, processImportJob, type ImportWorkerResult } from "@/lib/import-queue";
-import type { ImportSource } from "@/lib/importers";
+import { enqueueNormalizedImport, processImportJob, type ImportWorkerResult } from "@/lib/import-queue";
+import { parseImport, type ImportSource } from "@/lib/importers";
 
 type UserIdentity = Pick<User, "id" | "username" | "email">;
 
@@ -38,25 +38,15 @@ export async function importLibrary(input: {
   disableContentUpdate?: boolean;
   queueOnly?: boolean;
 }): Promise<ImportWorkerResult> {
-  const job = await enqueueImportFile(input.userId, input.source, input.filename, input.contents);
-  if (input.markAsRead || input.disableContentUpdate) {
-    const items = await db.importJobItem.findMany({ where: { jobId: job.id }, select: { id: true, payload: true } });
-    await db.$transaction(items.map((item) => {
-      if (!item.payload || typeof item.payload !== "object" || Array.isArray(item.payload)) throw new Error("Import item payload is invalid");
-      return db.importJobItem.update({
-        where: { id: item.id },
-        data: { payload: {
-          ...item.payload,
-          ...(input.markAsRead ? { archived: true } : {}),
-          ...(input.disableContentUpdate && typeof item.payload.content !== "string" ? { content: "<p></p>" } : {}),
-        } },
-      });
-    }));
-  }
+  const entries = parseImport(input.source, input.filename, input.contents).map((entry) => ({
+    ...entry,
+    archived: input.markAsRead || entry.archived,
+    content: input.disableContentUpdate ? entry.content ?? "<p></p>" : entry.content,
+  }));
+  const job = await enqueueNormalizedImport(input.userId, input.source, entries);
   if (input.queueOnly) return { id: job.id, status: job.status, total: job.total, imported: 0, skipped: 0, failed: 0 };
-  const processed = await processImportJob(job.id);
-  if (!processed) throw new Error("The newly queued import could not be claimed");
-  return processed;
+  const processed = await processImportJob(job.id) ?? await db.importJob.findUniqueOrThrow({ where: { id: job.id } });
+  return { id: processed.id, status: processed.status, total: processed.total, imported: processed.imported, skipped: processed.skipped, failed: processed.failed };
 }
 
 export async function importSingleUrl(input: { userId: string; url: string; tags?: string; markAsRead?: boolean }) {

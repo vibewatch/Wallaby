@@ -11,7 +11,7 @@
 #   WALLABY_MEDIA_DIR       - Persistent volume for downloaded article images
 #   WALLABY_BOT_PROFILES    - Retry bot-challenged fetches with search-bot /
 #                             browser request profiles ("true"/"false")
-#   WALLABY_BROWSER_RENDER  - Render challenged/JS-heavy pages in headless
+#   WALLABY_BROWSER_RENDER  - Render still-challenged pages in headless
 #                             Chromium. Requires the image to be built with
 #                             --build-arg INSTALL_CHROMIUM=true (see below).
 #   SITE_CREDENTIALS_KEY, TWO_FACTOR_*, POCKET_TOKEN_KEY - see .env.example

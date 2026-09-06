@@ -1,14 +1,11 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { stripHtml } from "@/lib/text";
 
 /**
- * How many ranked candidates the index is asked for. Relevance order cannot be
- * expressed inside the relational query that applies the remaining filters, so
- * the ranked ids are re-applied in memory afterwards; the cap keeps that work
- * bounded. A library large enough to overflow it is well past the point where
- * the five-hundredth best match still matters.
+ * Bounds each index batch and the final candidate set. Library filters are
+ * applied before the result cap so unrelated hits cannot hide eligible entries.
  */
 export const SEARCH_CANDIDATE_LIMIT = 500;
 
@@ -68,7 +65,10 @@ let capability: Promise<SearchEngine> | null = null;
  * and every caller degrades to portable matching without any provider check.
  */
 export function searchEngine(): Promise<SearchEngine> {
-  capability ??= probeSearchEngine();
+  capability ??= probeSearchEngine().catch((error) => {
+    capability = null;
+    throw error;
+  });
   return capability;
 }
 
@@ -81,9 +81,16 @@ async function probeSearchEngine(): Promise<SearchEngine> {
   try {
     await db.$queryRaw`SELECT "entryId" FROM "EntrySearch" WHERE "EntrySearch" MATCH 'wallaby' LIMIT 1`;
     return "index";
-  } catch {
+  } catch (error) {
+    if (!missingSearchIndex(error)) throw error;
     return "scan";
   }
+}
+
+function missingSearchIndex(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2010") return false;
+  const message = error.meta?.message;
+  return typeof message === "string" && /no such table: ["']?EntrySearch|relation ["']?EntrySearch["']? does not exist|no such module: fts5|syntax error at or near ["']MATCH["']/i.test(message);
 }
 
 /**
@@ -91,23 +98,31 @@ async function probeSearchEngine(): Promise<SearchEngine> {
  * should fall back to substring matching. Titles are weighted well above body
  * text so a search for a word in the headline outranks one buried in prose.
  */
-export async function rankedEntryIds(userId: string, term: string, limit = SEARCH_CANDIDATE_LIMIT): Promise<string[] | null> {
+export async function rankedEntryIds(userId: string, term: string, where: Prisma.EntryWhereInput = {}, limit = SEARCH_CANDIDATE_LIMIT): Promise<string[] | null> {
   const tokens = tokenizeSearch(term);
   const match = ftsMatchExpression(tokens);
   if (!match || (await searchEngine()) !== "index") return null;
 
-  let ranked: string[];
+  const ranked: string[] = [];
   try {
-    const rows = await db.$queryRaw<{ entryId: string }[]>`
-      SELECT "entryId" FROM "EntrySearch"
-      WHERE "EntrySearch" MATCH ${match} AND "userId" = ${userId}
-      ORDER BY bm25("EntrySearch", 0.0, 0.0, 10.0, 1.0, 4.0)
-      LIMIT ${limit}
-    `;
-    ranked = rows.map((row) => row.entryId);
-  } catch {
-    // An expression the index refuses should quietly degrade to a portable
-    // search rather than fail the page the reader asked for.
+    for (let offset = 0; ranked.length < limit; offset += SEARCH_CANDIDATE_LIMIT) {
+      const rows = await db.$queryRaw<{ entryId: string }[]>`
+        SELECT "entryId" FROM "EntrySearch"
+        WHERE "EntrySearch" MATCH ${match} AND "userId" = ${userId}
+        ORDER BY bm25("EntrySearch", 0.0, 0.0, 10.0, 1.0, 4.0), "entryId"
+        LIMIT ${SEARCH_CANDIDATE_LIMIT} OFFSET ${offset}
+      `;
+      if (!rows.length) break;
+      const eligible = await db.entry.findMany({
+        where: { AND: [where, { userId, id: { in: rows.map((row) => row.entryId) } }] },
+        select: { id: true },
+      });
+      const ids = new Set(eligible.map((entry) => entry.id));
+      ranked.push(...rows.filter((row) => ids.has(row.entryId)).slice(0, limit - ranked.length).map((row) => row.entryId));
+      if (rows.length < SEARCH_CANDIDATE_LIMIT) break;
+    }
+  } catch (error) {
+    if (!missingSearchIndex(error)) throw error;
     return null;
   }
 
@@ -115,7 +130,7 @@ export async function rankedEntryIds(userId: string, term: string, limit = SEARC
   // Searching for a tag the way you search for prose already worked before the
   // index existed, and losing it here would be a regression.
   const tagged = await db.entry.findMany({
-    where: { userId, tags: { some: { label: { contains: term } } } },
+    where: { AND: [where, { userId, tags: { some: { label: { contains: term } } } }] },
     select: { id: true },
     take: limit,
   });
@@ -128,7 +143,26 @@ type EntryPageArgs = {
   ranked: string[] | null;
   page: number;
   pageSize: number;
+  includeContent?: boolean;
 };
+
+const libraryEntrySelect = {
+  id: true,
+  title: true,
+  url: true,
+  summary: true,
+  archived: true,
+  starred: true,
+  language: true,
+  readingTime: true,
+  readingProgress: true,
+  domainName: true,
+  previewPicture: true,
+  createdAt: true,
+  tags: { select: { id: true, label: true, slug: true } },
+} satisfies Prisma.EntrySelect;
+
+export type LibraryEntry = Prisma.EntryGetPayload<{ select: typeof libraryEntrySelect }> & { content?: string };
 
 /**
  * Fetches one page of the library. Without a ranking the database paginates by
@@ -136,10 +170,11 @@ type EntryPageArgs = {
  * order first, because no relational `ORDER BY` can express "the order this
  * list arrived in".
  */
-export async function findEntryPage({ where, ranked, page, pageSize }: EntryPageArgs) {
+export async function findEntryPage({ where, ranked, page, pageSize, includeContent = false }: EntryPageArgs): Promise<{ entries: LibraryEntry[]; total: number }> {
+  const select = { ...libraryEntrySelect, content: includeContent };
   if (!ranked) {
     const [entries, total] = await Promise.all([
-      db.entry.findMany({ where, include: { tags: true }, orderBy: { createdAt: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
+      db.entry.findMany({ where, select, orderBy: { createdAt: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
       db.entry.count({ where }),
     ]);
     return { entries, total };
@@ -149,7 +184,7 @@ export async function findEntryPage({ where, ranked, page, pageSize }: EntryPage
   const matching = await db.entry.findMany({ where, select: { id: true } });
   matching.sort((first, second) => (rank.get(first.id) ?? ranked.length) - (rank.get(second.id) ?? ranked.length));
   const ids = matching.slice((page - 1) * pageSize, page * pageSize).map(({ id }) => id);
-  const found = await db.entry.findMany({ where: { AND: [where, { id: { in: ids } }] }, include: { tags: true } });
+  const found = await db.entry.findMany({ where: { AND: [where, { id: { in: ids } }] }, select });
   const byId = new Map(found.map((entry) => [entry.id, entry] as const));
   return { entries: ids.flatMap((id) => byId.get(id) ?? []), total: matching.length };
 }

@@ -75,6 +75,92 @@ test("reader can save extracted content, organize it, annotate it, and share it"
   expect(deleteResponse.status()).toBe(204);
 });
 
+test("reading progress stays monotonic and can archive an already-finished entry", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chrome", "Progress persistence needs one browser profile");
+  await signIn(page);
+  const created = await page.request.post("/api/entries", { data: {
+    url: `https://progress.example/${randomUUID()}`,
+    content: `<article><p>${"Reading progress should survive repeated and concurrent saves. ".repeat(35)}</p></article>`,
+  } });
+  expect(created.status()).toBe(201);
+  const entry = await created.json() as { id: string };
+  const path = `/api/entries/${entry.id}/progress`;
+  try {
+    for (const [progress, archive, expectedProgress, expectedArchive] of [
+      [0.4, false, 0.4, 0],
+      [0.8, false, 0.8, 0],
+      [0.3, false, 0.8, 0],
+      [0.97, false, 0.97, 0],
+      [0.97, true, 0.97, 1],
+      [0, false, 0, 1],
+    ] as const) {
+      const response = await page.request.post(path, { data: { progress, archive } });
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toMatchObject({ reading_progress: expectedProgress, is_archived: expectedArchive });
+    }
+    const concurrent = await Promise.all([0.3, 0.9, 0.4, 0.6].map((progress) => page.request.post(path, { data: { progress } })));
+    for (const response of concurrent) expect(response.status()).toBe(200);
+    const persisted = await page.request.get(`/api/entries/${entry.id}`);
+    expect(await persisted.json()).toMatchObject({ reading_progress: 0.9 });
+  } finally {
+    await page.request.delete(`/api/entries/${entry.id}`);
+  }
+});
+
+test("reader retries failed progress saves and stops rewriting a finished position", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chrome", "Progress transport coverage needs one browser profile");
+  await signIn(page);
+  const created = await page.request.post("/api/entries", { data: {
+    url: `https://progress-retry.example/${randomUUID()}`,
+    title: "A reading position worth keeping",
+    content: `<article>${Array.from({ length: 60 }, () => `<p>${"Saved reading should remain available after a temporary connection failure. ".repeat(8)}</p>`).join("")}</article>`,
+  } });
+  expect(created.status()).toBe(201);
+  const entry = await created.json() as { id: string };
+  const progressPath = `/api/entries/${entry.id}/progress`;
+  let requests = 0;
+  await page.route(`**${progressPath}`, async (route) => {
+    requests += 1;
+    if (requests === 1) await route.fulfill({ status: 503, json: { error: "temporarily_unavailable" } });
+    else await route.continue();
+  });
+  try {
+    await page.clock.install();
+    await page.goto(`/entries/${entry.id}`);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight / 2));
+    const bar = page.getByRole("progressbar", { name: "Reading progress" });
+    await expect.poll(async () => Number(await bar.getAttribute("aria-valuenow"))).toBeGreaterThan(10);
+    const failed = page.waitForResponse((response) => response.url().endsWith(progressPath) && response.status() === 503);
+    await page.clock.fastForward(4_100);
+    await failed;
+    await expect(page.locator(".toast")).toContainText("Reading progress could not be saved");
+
+    const retried = page.waitForResponse((response) => response.url().endsWith(progressPath) && response.status() === 200);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await retried;
+    const restored = await (await page.request.get(`/api/entries/${entry.id}`)).json() as { reading_progress: number };
+    expect(restored.reading_progress).toBeGreaterThan(0.1);
+
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await expect(bar).toHaveAttribute("aria-valuenow", "100");
+    const finished = page.waitForResponse((response) => response.url().endsWith(progressPath) && response.status() === 200);
+    await page.clock.fastForward(4_100);
+    await finished;
+    const saved = await page.request.get(`/api/entries/${entry.id}`);
+    expect(await saved.json()).toMatchObject({ reading_progress: 1 });
+    const requestsAtCompletion = requests;
+    for (let index = 0; index < 3; index++) {
+      await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+      await page.clock.fastForward(4_100);
+    }
+    await page.request.get(`/api/entries/${entry.id}`);
+    expect(requests).toBe(requestsAtCompletion);
+  } finally {
+    await page.unroute(`**${progressPath}`);
+    await page.request.delete(`/api/entries/${entry.id}`);
+  }
+});
+
 test("protected routes redirect to a usable responsive sign-in page", async ({ page }) => {
   await page.goto("/entries");
   await expect(page).toHaveURL(/\/auth\/signin/);
@@ -82,6 +168,47 @@ test("protected routes redirect to a usable responsive sign-in page", async ({ p
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test("pagination handles invalid and oversized page numbers across library, API, and feeds", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chrome", "Pagination input coverage needs one browser profile");
+  const prisma = new PrismaClient();
+  const username = `pagination-${randomUUID()}`;
+  const password = `Pagination-${randomUUID()}!`;
+  const feedToken = randomUUID();
+  const user = await prisma.user.create({ data: {
+    username,
+    passwordHash: await hash(password, 12),
+    preference: { create: { itemsPerPage: 1, feedLimit: 1, feedToken } },
+  } });
+  try {
+    await signIn(page, username, password);
+    const title = "A page that remains reachable";
+    const created = await page.request.post("/api/entries", { data: {
+      url: `https://pagination.example/${username}`,
+      title,
+      content: `<article><p>${"Pagination must not break the reading library. ".repeat(35)}</p></article>`,
+    } });
+    expect(created.status()).toBe(201);
+    const entry = await created.json() as { id: string };
+    for (const value of ["Infinity", "1.5", "-1", "not-a-page", "1e40", "9007199254740991"]) {
+      await page.goto(`/entries?view=all&page=${value}`);
+      await expect(page.getByRole("heading", { name: title })).toBeVisible();
+      for (const endpoint of ["/api/entries", "/api/search"]) {
+        const response = await page.request.get(`${endpoint}?page=${value}&perPage=1`);
+        expect(response.status()).toBe(200);
+        expect(await response.json()).toMatchObject({ page: 1, _embedded: { items: [{ id: entry.id }] } });
+      }
+      const feed = await page.request.get(`/feed/${username}/${feedToken}/all/${value}`);
+      expect(feed.status()).toBe(200);
+      const feedBody = await feed.text();
+      expect(feedBody).toContain(title);
+      expect(feedBody).toContain(`/feed/${username}/${feedToken}/all" rel="first" />`);
+    }
+  } finally {
+    await prisma.user.delete({ where: { id: user.id } });
+    await prisma.$disconnect();
+  }
 });
 
 test("production health probes and browser security headers are active", async ({ page }) => {
@@ -180,6 +307,21 @@ test("quick-start help is reachable and responsive", async ({ page }) => {
   await expect(page.getByRole("main").getByRole("link", { name: "Import & export" })).toHaveAttribute("href", "/entries/import");
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test("sidebar search focuses the library field after client-side navigation", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chrome", "Sidebar keyboard focus needs one desktop profile");
+  await signIn(page);
+  for (const path of ["/entries?view=all", "/entries/help"]) {
+    await page.goto(path);
+    await page.getByRole("navigation", { name: "Library", exact: true }).getByRole("link", { name: "Search", exact: true }).click();
+    const search = page.getByRole("textbox", { name: "Search your library" });
+    await expect(search).toBeFocused();
+    await search.press("Escape");
+    await expect(search).not.toBeFocused();
+    await page.keyboard.press("/");
+    await expect(search).toBeFocused();
+  }
 });
 
 test("mobile utility navigation reaches account, portability, and administration", async ({ page }, testInfo) => {
@@ -971,6 +1113,21 @@ test("untagged, same-domain, and random library views are reachable", async ({ p
   await expect(page).toHaveURL(new RegExp(`/entries/${random.id}$`));
   await expect(page.getByRole("heading", { name: randomTitle, level: 1 })).toBeVisible();
 
+  const filteredQuery = new URLSearchParams({ view: "all", q: randomTitle, domain });
+  await page.goto(`/entries?${filteredQuery}`);
+  const randomLink = page.getByRole("link", { name: "Read a random entry" });
+  const randomHref = await randomLink.getAttribute("href");
+  const randomParams = new URL(randomHref!, page.url()).searchParams;
+  expect(randomParams.get("q")).toBe(randomTitle);
+  expect(randomParams.get("domain")).toBe(domain);
+  await randomLink.click();
+  await expect(page).toHaveURL(new RegExp(`/entries/${random.id}$`));
+
+  filteredQuery.set("domain", "no-matching-publication.example");
+  const empty = await page.request.get(`/entries/random?${filteredQuery}`, { maxRedirects: 0 });
+  expect(empty.status()).toBe(307);
+  expect(empty.headers().location).toBe(`/entries?${filteredQuery}`);
+
   for (const entry of [first, second, random]) expect((await page.request.delete(`/api/entries/${entry.id}`)).status()).toBe(204);
 });
 
@@ -1043,6 +1200,58 @@ test("bulk entry and tag actions share one ownership-checked workflow", async ({
     { url: entries[1].url, entry: true },
     { url: "https://missing.example/not-saved", entry: false },
   ]);
+});
+
+test("destructive entry actions require inline confirmation", async ({ page }, testInfo) => {
+  await signIn(page);
+  const unique = randomUUID();
+  const entries: { id: string; title: string }[] = [];
+  const dialogs: string[] = [];
+  page.on("dialog", (dialog) => { dialogs.push(dialog.message()); void dialog.dismiss(); });
+  try {
+    for (const name of ["Bulk", "Reader"]) {
+      const title = `${name} confirmation ${unique}`;
+      const response = await page.request.post("/api/entries", { data: {
+        url: `https://confirmation.example/${unique}/${name}`,
+        title,
+        content: `<article><p>${"Deletion should always be an intentional decision. ".repeat(35)}</p></article>`,
+      } });
+      expect(response.status()).toBe(201);
+      entries.push({ ...(await response.json() as { id: string }), title });
+    }
+    await page.goto(`/entries?view=all&q=${unique}`);
+    await page.getByLabel(`Select ${entries[0].title}`).check();
+    await page.getByLabel("Bulk action").selectOption("delete");
+    const toolbar = page.locator(".bulk-toolbar");
+    await toolbar.getByRole("button", { name: "Apply", exact: true }).click();
+    const confirmation = toolbar.locator(".inline-confirmation");
+    await expect(confirmation).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    expect((await page.request.get(`/api/entries/${entries[0].id}`)).status()).toBe(200);
+    await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(confirmation).toHaveCount(0);
+    expect((await page.request.get(`/api/entries/${entries[0].id}`)).status()).toBe(200);
+    await toolbar.getByRole("button", { name: "Apply", exact: true }).click();
+    await confirmation.getByRole("button", { name: "Confirm delete", exact: true }).click();
+    await expect(page.locator(".toast")).toContainText("Deleted 1 entry");
+    expect((await page.request.get(`/api/entries/${entries[0].id}`)).status()).toBe(404);
+
+    if (testInfo.project.name === "desktop-chrome") {
+      await page.goto(`/entries/${entries[1].id}`);
+      await page.getByTitle("Delete", { exact: true }).click();
+      const readerConfirmation = page.locator(".reader-actions .inline-confirmation");
+      await expect(readerConfirmation).toContainText(entries[1].title);
+      await readerConfirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+      expect((await page.request.get(`/api/entries/${entries[1].id}`)).status()).toBe(200);
+      await page.getByTitle("Delete", { exact: true }).click();
+      await readerConfirmation.getByRole("button", { name: "Confirm delete", exact: true }).click();
+      await expect(page).toHaveURL(/\/entries$/);
+      expect((await page.request.get(`/api/entries/${entries[1].id}`)).status()).toBe(404);
+    }
+    expect(dialogs).toEqual([]);
+  } finally {
+    for (const entry of entries) await page.request.delete(`/api/entries/${entry.id}`);
+  }
 });
 
 test("advanced library and API filters preserve wallabag semantics", async ({ page }, testInfo) => {
@@ -1319,6 +1528,54 @@ test("library search ranks matches, highlights them, and agrees with the export"
   }
 });
 
+test("ranked search applies library filters before its candidate limit", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chrome", "Large-library search coverage needs one browser profile");
+  const prisma = new PrismaClient();
+  const unique = randomUUID();
+  const username = `search-limit-${unique}`;
+  const password = `Search-limit-${unique}!`;
+  const token = `narrowmatch${Date.now()}`;
+  const user = await prisma.user.create({ data: { username, passwordHash: await hash(password, 12), preference: { create: {} } } });
+  try {
+    await prisma.entry.createMany({ data: Array.from({ length: 501 }, (_, index) => ({
+      userId: user.id,
+      title: `${token} headline ${index}`,
+      url: `https://outside-filter.example/${index}`,
+      givenUrl: `https://outside-filter.example/${index}`,
+      urlHash: String(index),
+      domainName: "outside-filter.example",
+      content: "<p>A higher-ranked headline outside the selected view.</p>",
+      archived: true,
+    })) });
+    const matching = await prisma.entry.create({ data: {
+      userId: user.id,
+      title: "The matching unread article",
+      url: "https://matching-filter.example/article",
+      givenUrl: "https://matching-filter.example/article",
+      urlHash: "matching",
+      domainName: "matching-filter.example",
+      content: `<p>${token} appears in the body rather than the headline.</p>`,
+    } });
+    await signIn(page, username, password);
+    for (const query of [
+      new URLSearchParams({ view: "unread", q: token }),
+      new URLSearchParams({ view: "all", q: token, domain: "matching-filter.example" }),
+    ]) {
+      await page.goto(`/entries?${query}`);
+      await expect(page.locator(".entry-list .entry-title h2")).toHaveText([matching.title]);
+      await expect(page.locator(".results-line")).toContainText("Most relevant first");
+      const exportHref = await page.getByRole("link", { name: "Export results" }).getAttribute("href");
+      const exported = await page.request.get(exportHref!);
+      expect(await exported.json()).toMatchObject([{ id: matching.id }]);
+      await page.getByRole("link", { name: "Read a random entry" }).click();
+      await expect(page).toHaveURL(new RegExp(`/entries/${matching.id}$`));
+    }
+  } finally {
+    await prisma.user.delete({ where: { id: user.id } });
+    await prisma.$disconnect();
+  }
+});
+
 test("private feeds support tag pagination, limits, and RSS", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chrome", "Feed configuration needs one browser profile");
   await signIn(page);
@@ -1347,7 +1604,7 @@ test("private feeds support tag pagination, limits, and RSS", async ({ page }, t
       const response = await page.request.post("/api/entries", { data: {
         url: `https://feed-${unique}.example/${index}`,
         title,
-        tags: [tag],
+        tags: [tag, String(unique)],
         content: `<article><p>${"Feed article. ".repeat(35)}</p></article>`,
       } });
       expect(response.status()).toBe(201);
@@ -1365,10 +1622,17 @@ test("private feeds support tag pagination, limits, and RSS", async ({ page }, t
     expect(rss.status()).toBe(200);
     expect(rss.headers()["content-type"]).toContain("application/rss+xml");
     expect(await rss.text()).toContain("<rss version=\"2.0\">");
+    const numericTagPath = `/feed/demo/${token}/tags/${unique}`;
+    const numericTag = await page.request.get(numericTagPath);
+    expect(numericTag.status()).toBe(200);
+    const numericBody = await numericTag.text();
+    expect(numericBody).toContain(`${numericTagPath}" rel="first" />`);
+    expect(numericBody).toContain(`${numericTagPath}/2" rel="next" />`);
   } finally {
     await page.request.patch("/api/config", { data: { feed_limit: original.feed_limit } });
     for (const entry of entries) await page.request.delete(`/api/entries/${entry.id}`);
     await page.request.delete(`/api/tags?label=${encodeURIComponent(tag)}`);
+    await page.request.delete(`/api/tags?label=${unique}`);
     if (createdToken) {
       await page.goto("/entries/settings");
       await page.getByRole("button", { name: "Revoke", exact: true }).click();

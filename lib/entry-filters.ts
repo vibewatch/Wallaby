@@ -63,20 +63,21 @@ export function entryWhere(userId: string, filters: EntryFilters, readingSpeed: 
   if (filters.view === "annotated") where.annotations = { some: {} };
   if (filters.view === "untagged") where.tags = { none: {} };
   if (filters.view === "same-domain") where.domainName = sameDomain ?? "__wallaby_missing_domain__";
+  // Cards round up to whole minutes and always display at least one minute.
   if (filters.minRead !== null || filters.maxRead !== null) where.readingTime = {
-    gte: filters.minRead === null ? undefined : Math.floor(filters.minRead * readingSpeed / 200),
-    lte: filters.maxRead === null ? undefined : Math.floor(filters.maxRead * readingSpeed / 200),
+    gte: filters.minRead === null ? undefined : filters.minRead <= 1 ? 0 : Math.floor((Math.ceil(filters.minRead) - 1) * readingSpeed / 200) + 1,
+    lte: filters.maxRead === null ? undefined : filters.maxRead < 1 ? -1 : Math.floor(Math.floor(filters.maxRead) * readingSpeed / 200),
   };
   if (filters.createdFrom || filters.createdTo) where.createdAt = { gte: filters.createdFrom ?? undefined, lte: filters.createdTo ?? undefined };
   if (filters.publishedFrom || filters.publishedTo) where.publishedAt = { gte: filters.publishedFrom ?? undefined, lte: filters.publishedTo ?? undefined };
-  if (filters.domain) where.domainName = { contains: filters.domain };
+  if (filters.domain) where.AND = [{ domainName: { contains: filters.domain } }];
   if (filters.language) where.language = filters.language;
   if (filters.httpStatus !== null) where.httpStatus = filters.httpStatus;
   if (filters.notParsed) where.isNotParsed = true;
   if (filters.hasPreview) where.previewPicture = { not: null };
   if (filters.hasAnnotations) where.annotations = { some: {} };
   if (filters.isShared) where.shareToken = { not: null };
-  if (filters.tag) where.tags = { some: { slug: filters.tag } };
+  if (filters.tag) where.tags = { ...where.tags, some: { slug: filters.tag } };
   if (filters.query) {
     if (matchedIds) where.id = { in: matchedIds };
     else where.OR = [

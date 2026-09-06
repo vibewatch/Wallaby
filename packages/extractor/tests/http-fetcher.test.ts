@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { HttpFetcher, removeTrackers } from "../src";
+import { Extractor, HttpFetcher, removeTrackers } from "../src";
 
 const encoder = new TextEncoder();
 
@@ -18,6 +18,7 @@ type StubResponse = {
   headers?: Record<string, string>;
   body?: string | Uint8Array;
   url?: string;
+  cookies?: string[];
 };
 
 // Build a minimal Response-like object matching what HttpFetcher reads.
@@ -30,7 +31,7 @@ function makeResponse(url: string, stub: StubResponse) {
     body: streamOf(bytes),
     headers: {
       get: (name: string) => headerMap.get(name.toLowerCase()) ?? null,
-      getSetCookie: () => [],
+      getSetCookie: () => stub.cookies ?? [],
       entries: () => headerMap.entries(),
       [Symbol.iterator]: () => headerMap.entries(),
     },
@@ -99,6 +100,67 @@ describe("HttpFetcher", () => {
     await new HttpFetcher(options).fetch(new URL("https://93.184.216.34/p307"), {}, { method: "POST", body: "x=1" });
     expect(seen.find((s) => s.path === "/after302")?.method).toBe("GET");
     expect(seen.find((s) => s.path === "/after307")?.method).toBe("POST");
+  });
+
+  it("keeps cookies and sensitive headers out of unrelated redirect origins", async () => {
+    const requests = installFetch((url) => url.endsWith("/start")
+      ? { status: 302, headers: { location: "https://1.1.1.1/landing" }, cookies: ["session=private; Path=/; Secure"] }
+      : { body: "arrived" });
+    await new HttpFetcher(options).fetch(new URL("https://93.184.216.34/start"), { authorization: "Bearer test-only", cookie: "manual=private" });
+
+    const redirected = new Headers(requests[1].init.headers);
+    expect(redirected.get("cookie")).toBeNull();
+    expect(redirected.get("authorization")).toBeNull();
+  });
+
+  it.each(["https://93.184.216.34/public", "http://93.184.216.34/account/final"])("respects cookie path and Secure attributes when redirecting to %s", async (destination) => {
+    const requests = installFetch((url) => url.endsWith("/start")
+      ? { status: 302, headers: { location: destination }, cookies: ["restricted=private; Path=/account; Secure"] }
+      : { body: "arrived" });
+    await new HttpFetcher(options).fetch(new URL("https://93.184.216.34/account/start"));
+    expect(new Headers(requests[1].init.headers).get("cookie")).toBeNull();
+  });
+
+  it("does not replay a login POST body to a different origin", async () => {
+    const requests = installFetch((url) => url.endsWith("/login")
+      ? { status: 307, headers: { location: "https://1.1.1.1/collect" } }
+      : { body: "should not receive the body" });
+    await expect(new HttpFetcher(options).fetch(new URL("https://93.184.216.34/login"), {}, { method: "POST", body: "password=test-only" }))
+      .rejects.toThrow("Refusing to forward a POST body across origins");
+    expect(requests).toHaveLength(1);
+  });
+
+  it("carries a dynamic login session through the real HTTP transport", async () => {
+    installFetch((url, init) => {
+      const headers = new Headers(init.headers);
+      if (url.endsWith("/session") && init.method === "GET") {
+        return {
+          headers: { "content-type": "text/html" },
+          cookies: ["prelogin=csrf-session; Path=/; Secure; HttpOnly"],
+          body: '<form><input name="csrf" value="session-bound-token"></form>',
+        };
+      }
+      if (url.endsWith("/session")) {
+        expect(headers.get("cookie")).toContain("prelogin=csrf-session");
+        expect(init.body).toContain("csrf=session-bound-token");
+        return { body: "signed in", cookies: ["authenticated=ready; Path=/reader; Secure; HttpOnly"] };
+      }
+      expect(headers.get("cookie")).toContain("authenticated=ready");
+      return { headers: { "content-type": "text/html" }, body: "<article><p>The authenticated article is available.</p></article>" };
+    });
+    const extractor = new Extractor({
+      siteConfigs: { "93.184.216.34.txt": [
+        "requires_login: yes",
+        "login_uri: /session",
+        "login_username_field: username",
+        "login_password_field: password",
+        "login_extra_fields: csrf=@=xpath('//input[@name=\"csrf\"]/@value', request_html(config.getLoginUri()))",
+        "body: //article",
+      ].join("\n") },
+    });
+    const content = await extractor.fetchContent("https://93.184.216.34/reader/story", undefined, { username: "reader", password: "test-only" });
+    expect(content.html).toContain("The authenticated article is available");
+    expect(content.isNotParsed).toBe(false);
   });
 
   it("throws when redirects exceed the configured maximum", async () => {

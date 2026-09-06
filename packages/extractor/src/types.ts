@@ -45,6 +45,8 @@ export interface FetchRequestOptions {
   method?: "GET" | "POST";
   body?: string;
   cookies?: string[];
+  /** Shared extraction-local state; transports that update it may omit setCookies. */
+  cookieJar?: CookieJar;
 }
 
 export interface Fetcher {
@@ -156,3 +158,4 @@ export class SiteConfig {
     return this.autodetect_on_failure ?? true;
   }
 }
+import type { CookieJar } from "jsdom";

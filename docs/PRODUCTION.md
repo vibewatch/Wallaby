@@ -14,6 +14,8 @@ npm run release
 
 The release gate requires a running Docker Engine. It runs lint, TypeScript, the complete unit/integration suite, the complete 2,037-site extraction corpus, a production build, isolated desktop/mobile Playwright workflows, the production dependency audit, Prisma schema validation, and a production-container acceptance test. The container test builds a production-dependency-only image, migrates a fresh volume, proves liveness/readiness and security headers as the non-root runtime user, checks Docker health and graceful shutdown, starts the durable worker once, and then removes its uniquely named test resources. Playwright likewise creates a migrated database and media directory under `.tmp/e2e` and removes both after the run; neither gate uses the operator's normal database.
 
+The scoped `@prisma/config` override selects `deepmerge-ts` 8 to address GHSA-ggr8-5vv4-36mx without downgrading Prisma or mismatching its CLI and generated client. The application uses plain-record Prisma configuration, not the Map-merging behavior changed by that release. Reassess the override when upgrading Prisma.
+
 ## Required configuration
 
 Production startup fails before migrations or traffic when `AUTH_SECRET` is missing, short, or still a placeholder; when `DATABASE_URL` targets `dev.db`; or when encryption, SMTP, feature-flag, or public-origin settings are malformed. Generate independent secrets rather than copying `.env.example` values:
@@ -52,7 +54,7 @@ The Docker image includes a readiness-based health check. Unexpected server fail
 
 ## Worker and external boundaries
 
-Run the import worker continuously. The default Compose profile starts it only after the web container is healthy. Jobs and individual items are durable, stale claims are recovered, and retries are bounded. For the SQLite profile, keep one worker process; its internal concurrency already processes three items at once.
+Run the import worker continuously. The default Compose profile starts it only after the web container is healthy. Jobs and their initial items are published atomically, active claims renew every 30 seconds, and abandoned claims are recovered after five minutes. Unique claim tokens prevent stale workers from publishing results after recovery, and retries are bounded. For the SQLite profile, keep one worker process; its internal concurrency already processes three items at once.
 
 SMTP delivery, Pocket authorization, authenticated publication login, and optional Chromium extraction depend on real external providers and must be smoke-tested with deployment-owned accounts. Browser extraction also requires `INSTALL_CHROMIUM=true` at image build time together with `WALLABY_BROWSER_RENDER=true` at runtime; ordinary HTTP extraction remains available when both are off.
 

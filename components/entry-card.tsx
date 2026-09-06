@@ -1,14 +1,13 @@
-import type { Entry, Tag } from "@prisma/client";
 import { Archive, Clock3, ExternalLink, Globe2, Star } from "lucide-react";
 import Link from "next/link";
 
 import { ActionForm } from "@/components/action-form";
 import { toggleArchived, toggleStarred } from "@/lib/actions";
 import { clampProgress, isFinished, isStarted, progressLabel } from "@/lib/reading-progress";
-import { searchSnippet, type SearchTokens } from "@/lib/search";
+import { searchSnippet, type LibraryEntry, type SearchTokens } from "@/lib/search";
 
 export function EntryCard({ entry, selectionFormId, highlight = null, compact = false, displayThumbnail = true, readingSpeed = 200 }: {
-  entry: Entry & { tags: Tag[] };
+  entry: LibraryEntry;
   selectionFormId?: string;
   /** Search terms to preview in context instead of the stored summary. */
   highlight?: SearchTokens | null;
@@ -20,7 +19,7 @@ export function EntryCard({ entry, selectionFormId, highlight = null, compact = 
   const starAction = toggleStarred.bind(null, entry.id);
   const progress = clampProgress(entry.readingProgress);
   const progressText = progressLabel(progress);
-  const snippet = highlight ? searchSnippet(entry.content, highlight) : null;
+  const snippet = highlight ? searchSnippet(entry.content ?? "", highlight) : null;
   return (
     <article className={`entry-card${compact ? " compact" : ""}${displayThumbnail ? "" : " no-thumbnail"}`} data-entry-card={entry.id}>
       {selectionFormId ? <input className="entry-select" type="checkbox" name="ids" value={entry.id} form={selectionFormId} aria-label={`Select ${entry.title}`} /> : null}

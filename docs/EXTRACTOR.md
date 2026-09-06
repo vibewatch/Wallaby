@@ -19,8 +19,8 @@ The engine exposes these entry points:
 | SSRF-aware URL fetching | Supported | DNS resolution blocks private/reserved ranges before each redirect; userinfo blocked | Pin resolved IP through connection to eliminate DNS rebinding window; proxy support |
 | Redirect, timeout, response-size limits | Supported | Manual bounded redirects, abort timeout, streamed byte cap | Retry policy and HTTP cache |
 | Bot-challenge fallback (search-bot profiles) | Supported (opt-in) | `botProfiles` rotates Googlebot/Bingbot then desktop/mobile browser profiles when a GET is met with a challenge status or a 200 interstitial (Cloudflare/Vercel/DataDome/PerimeterX/Akamai); `looksLikeBotChallenge` guards against flagging real articles | Per-host winning-profile memory; `Retry-After`/429 backoff |
-| Real-browser rendering | Supported (opt-in) | `browserRender` renders JS-heavy or still-challenged GETs in headless Chromium via the optional `playwright` peer dependency (lazy-loaded); every navigation and subresource is SSRF-revalidated and heavy resources are blocked | Reader-proxy / archival fallbacks; per-host render caching |
-| Custom headers and user agent | Supported | Site-config headers merged into request; upstream default UA/referer, per-host `user_agents`, and `rewrite_url` map | Cookie jar and referer policy per site |
+| Real-browser rendering | Partial (opt-in) | `browserRender` renders still-challenged GETs in headless Chromium via the optional `playwright` peer dependency (lazy-loaded); every navigation and subresource is SSRF-revalidated and heavy resources are blocked | Automatic rendering of ordinary JavaScript-only shells; reader-proxy / archival fallbacks; per-host render caching |
+| Custom headers and user agent | Supported | Site-config headers merged into request; upstream default UA/referer, per-host `user_agents`, and `rewrite_url` map; extraction-local cookie jar honors domain, path, expiry, and Secure attributes | Persistent cookie sessions and per-site referer policy |
 | Character decoding | Supported | HTTP charset precedence, BOM detection, XML declaration and HTML meta sniffing (`http-equiv` first), `none`/`iso-8850-1` fixups, Windows-1252/UTF family decoding | Port the malformed-encoding and replacement-character fixtures |
 | Meta-refresh / Refresh header following | Supported | Follows `Refresh` header and `<meta http-equiv=refresh>` (both attribute orders), bounded by `maxRedirects` | Port `_escaped_fragment_` AJAX-crawl fixtures |
 | Tracker stripping | Supported | Removes `utm_*`/`mtm_*` query params and `xtor=RSS` fragment from the effective URL | — |
@@ -33,21 +33,22 @@ The engine exposes these entry points:
 | Fingerprint-based configs | Supported | Default Blogger (both orders), WordPress, Medium (`data-rh`), Substack, and ippen.media fingerprints plus configurable regex-to-host map | Port the complete upstream fingerprint fixture matrix |
 | OpenGraph metadata | Supported | Title, non-`data:` image (og:image → url → secure_url), locale, published-over-modified date | Fixture parity for duplicate/invalid properties |
 | JSON-LD metadata | Supported | Graph flattening, headline/name, authors, dates, images, article body; ignores `Organization\|WebSite\|Person\|VideoGame` and their names as title candidates | Match upstream graby's title conflict behavior on every fixture |
-| Site XPath title/body/author/date | Supported | JSDOM XPath evaluation with string/node handling; matched entity nodes removed from the DOM | Port upstream graby's full malformed-XPath and DOM mutation fixtures |
+| Site XPath title/body/author/date | Supported | JSDOM XPath evaluation with explicit string/node handling, including scalar JSON-LD body rules; non-node selectors are skipped safely and matched entity nodes removed from the DOM | Port upstream graby's full malformed-XPath and DOM mutation fixtures |
 | hNews / Instapaper / Schema.org autodetection | Supported | `hentry` entry-title/entry-content/published/vcard-author, `instapaper_title`/`instapaper_body`, `itemprop=articleBody`, `rel=author`, `meta[name=author]`, `time[pubdate]` fallbacks | Port upstream microformat fixtures |
 | Language detection | Supported | `html[lang]`/`DC.language` over `og:locale`, then `Content-Language` response header | — |
 | Readability fallback | Supported | Mozilla Readability, used only for still-missing title/body | Compare scoring and pruning against `j0k3r/php-readability`; tune divergent fixtures |
-| String replacement, strip, class/id strip, attribute strip, wrap | Supported | Pre- and post-extraction DOM transforms; quote-stripped class/id/image-src matching | Conditional transform ordering parity corpus |
+| String replacement, strip, class/id strip, attribute strip, wrap | Supported | Pre- and post-extraction DOM transforms; post-strip attributes are removed after publisher selectors run; quote-stripped class/id/image-src matching | Conditional transform ordering parity corpus |
 | Lazy image promotion | Supported | Upstream default attribute set incl. `data-srcset`→`srcset`, plus WordPress `noscript` sibling restoration | Port complete source/srcset edge-case fixtures |
 | Content cleanup | Supported | Empty `<a>`/`<p>` removal, single-child container unwrap, leading duplicate-title heading removal, self-closing iframe placeholder | Port `normalize()`/nested-unwrap fixtures |
+| Prefetched/imported content | Supported | Whole-body cleanup preserves saved HTML without requiring publisher wrappers; prefetched input never triggers login, single-page, or next-page requests | — |
 | Relative URL rewriting | Supported | `href`, `src`, `poster`, and `srcset`; in-page `#anchor` links preserved | CSS URL rewriting and `<base>` corner cases |
 | XSS cleanup | Supported | Allowlist sanitizer removes scripts, event handlers, styles, unsafe schemes; disable with `xssFilter: false` | Differential security corpus against htmLawed; policy review for embeds |
 | No-referrer images | Supported | `referrerpolicy=no-referrer` | None known |
 | Link preserve/footnotes/remove | Supported | Configurable cleanup modes with deduplicated footnotes (disabled for Wikipedia as upstream graby does) | Port upstream footnote DOM fixtures |
 | Native-ad clue | Supported | XPath match | Behavioral fixture |
-| Next-page and multipage extraction | Supported | Conditional XPath discovery, normalized fetch, loop/MIME/ceiling detection; interrupted walks discard partial pages and append the upstream "continues on subsequent pages" notice | Port remaining page-break failure fixtures |
+| Next-page and multipage extraction | Supported | Conditional XPath discovery, normalized fetch, loop/MIME/ceiling detection; transport failures and interrupted walks retain the first page, discard partial additional pages, and append the upstream "continues on subsequent pages" notice | Port remaining page-break failure fixtures |
 | Single-page link | Supported | Conditional XPath fetch and re-extraction before multipage handling | Port upstream redirect/failure fixtures |
-| Authenticated sites | Supported | Per-user AES-256-GCM credentials, config-driven form POST, cookie redirects, `not_logged_in_xpath` retry, and sandboxed `request_html`, `xpath`, `preg_match`, and `config.getLoginUri` dynamic fields | Live smoke tests remain deployment/provider-specific and require real credentials |
+| Authenticated sites | Supported | Per-user AES-256-GCM credentials, config-driven form POST, shared cookies through dynamic token requests and redirects, `not_logged_in_xpath` retry, and sandboxed `request_html`, `xpath`, `preg_match`, and `config.getLoginUri` fields | Live smoke tests remain deployment/provider-specific and require real credentials |
 | HTML and XHTML MIME | Supported | Metadata and readable extraction | Feed/oEmbed discovery behavior |
 | Images | Supported | Safe linked image document | Dimensions/type metadata |
 | Plain text | Supported | Escaped `<pre>` output | Charset fixtures |
@@ -59,6 +60,8 @@ The engine exposes these entry points:
 ## Security boundaries
 
 The fetcher does not trust a URL merely because parsing succeeds. It accepts only HTTP(S), rejects URL credentials and local hostnames, resolves every redirect target, and rejects non-public IP ranges. Responses are streamed into a fixed byte budget. Extracted HTML passes through a narrow allowlist before it is persisted or rendered.
+
+Cookie state is scoped to one extraction and follows domain, path, expiry, and Secure rules. Cross-origin redirects remove explicit Cookie and Authorization headers, and 307/308 redirects cannot replay a login POST body to another origin.
 
 Site credentials are stored only as versioned AES-256-GCM payloads with a fresh nonce per value. The deployment key is validated as a base64-encoded 32-byte value and never stored in Prisma. Rotating it requires re-entering saved credentials; corrupted or incorrectly keyed ciphertext fails authentication rather than returning partial plaintext.
 
