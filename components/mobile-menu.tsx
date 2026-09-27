@@ -15,6 +15,7 @@ export function MobileMenu({ isAdmin }: { isAdmin: boolean }) {
       <summary aria-label="More navigation"><Menu size={20} /></summary>
       <nav aria-label="More">
         <Link href="/entries?view=annotated" onClick={close}><Highlighter size={17} /><span>Annotated</span></Link>
+        <Link href="/entries/tags" onClick={close}><Tags size={17} /><span>Tags</span></Link>
         <Link href="/entries?view=untagged" onClick={close}><Tags size={17} /><span>Untagged</span></Link>
         <Link href="/entries?focus=search" onClick={close}><Search size={17} /><span>Search</span></Link>
         <Link href="/entries/import" onClick={close}><Import size={17} /><span>Import & export</span></Link>

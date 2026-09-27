@@ -8,6 +8,7 @@ import { apiError, apiRequestObject } from "@/lib/api-response";
 import { db } from "@/lib/db";
 import { serializeEntry } from "@/lib/entry-serializer";
 import { createEntryWithResult, parseTags, slugify } from "@/lib/entries";
+import { InvalidEntryUrlError, parseEntryUrl } from "@/lib/entry-url";
 import { getExtractor } from "@/lib/extractor";
 import { pageNumber, positiveInteger } from "@/lib/pagination";
 
@@ -82,10 +83,14 @@ export async function POST(request: Request) {
 
   let normalizedUrl: string;
   try {
-    const url = new URL(parsed.data.url);
-    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
-    normalizedUrl = url.toString();
-  } catch { return apiError(400, "invalid_url", `The url “${parsed.data.url}” is not a valid HTTP URL`); }
+    // The wallabag API contract requires an explicit scheme; the shared parser
+    // then applies the same rules as every other save path.
+    if (!/^https?:\/\//i.test(parsed.data.url.trim())) throw new InvalidEntryUrlError("A scheme is required");
+    normalizedUrl = parseEntryUrl(parsed.data.url).toString();
+  } catch (error) {
+    if (!(error instanceof InvalidEntryUrlError)) throw error;
+    return apiError(400, "invalid_url", `The url “${parsed.data.url}” is not a valid HTTP URL`);
+  }
 
   const { entry: base, created } = await createEntryWithResult(userId, {
     url: normalizedUrl,

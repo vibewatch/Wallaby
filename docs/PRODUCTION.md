@@ -50,13 +50,19 @@ Before upgrades, take a backup. The container entrypoint applies forward migrati
 - `GET /api/health/ready` proves SQLite is queryable and, when local image capture is enabled, that the media directory is readable and writable.
 - Both endpoints are public, return no secrets, and are explicitly non-cacheable.
 
-The Docker image includes a readiness-based health check. Unexpected server failures are written as single-line JSON with event name, route template, error type, digest, and timestamp; request headers, query strings, feed tokens, and article contents are deliberately excluded. Ship stdout/stderr to the deployment's log collector and alert on readiness failures, container restarts, `request.failed`, and sustained `auth.credentials_rejected` events.
+The Docker image includes a readiness-based health check. Unexpected server failures are written as single-line JSON with event name, route template, error type, digest, and timestamp; request headers, query strings, feed tokens, and article contents are deliberately excluded. Ship stdout/stderr to the deployment's log collector and alert on readiness failures, container restarts, `request.failed`, and sustained `auth.credentials_rejected` events. `request.aborted` is informational: the browser stopped reading a page it had requested, usually because the reader navigated on.
 
 ## Worker and external boundaries
 
 Run the import worker continuously. The default Compose profile starts it only after the web container is healthy. Jobs and their initial items are published atomically, active claims renew every 30 seconds, and abandoned claims are recovered after five minutes. Unique claim tokens prevent stale workers from publishing results after recovery, and retries are bounded. For the SQLite profile, keep one worker process; its internal concurrency already processes three items at once.
 
 Recovered imports finish image processing and automatic tagging before completing. Image downloads stay outside database transactions; only a current claim can publish their results. Abrupt process death can leave unreferenced media files, which the existing `images:cleanup` command reconciles.
+
+The continuous worker also prunes expired credentials and old import payloads hourly, logging `maintenance.pruned` with per-table counts (or `maintenance.prune_failed`). Deployments that only run `import:worker:once` from a scheduler should schedule `npm run maintenance:prune` too.
+
+A bulk **Fetch again** from the library runs in the web process after the response and logs `entries.refetch.completed` with `fetched`, `incomplete`, and `failed` counts. A restart abandons the rest of a batch harmlessly; for whole-library reloads, prefer `npm run entries:reload`.
+
+With SMTP configured and `AUTH_URL` set, the sign-in page offers **Forgot your password?**. Reset emails are sent after the response so its timing does not reveal whether an account exists; a delivery failure is logged as `password_reset.delivery_failed` and the user sees the same confirmation, so alert on that event. Without SMTP, administrators reset passwords on the **Administration** page (`/entries/admin`).
 
 SMTP delivery, Pocket authorization, authenticated publication login, and optional Chromium extraction depend on real external providers and must be smoke-tested with deployment-owned accounts. Browser extraction also requires `INSTALL_CHROMIUM=true` at image build time together with `WALLABY_BROWSER_RENDER=true` at runtime; ordinary HTTP extraction remains available when both are off.
 

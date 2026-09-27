@@ -1,11 +1,11 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 
 import { compare, hash } from "bcryptjs";
-import { SMTPClient } from "emailjs";
 import type { Prisma } from "@prisma/client";
 import QRCode from "qrcode";
 
 import { db } from "@/lib/db";
+import { isInstanceEmailConfigured, sendInstanceEmail } from "@/lib/mail";
 
 export const TWO_FACTOR_CHALLENGE_COOKIE = "wallaby.two-factor";
 export const TRUSTED_DEVICE_COOKIE = "wallaby.trusted-device";
@@ -36,7 +36,7 @@ export function isTwoFactorEncryptionConfigured(): boolean {
 }
 
 export function isTwoFactorEmailConfigured(): boolean {
-  return Boolean(process.env.TWO_FACTOR_SMTP_HOST?.trim() && process.env.TWO_FACTOR_EMAIL_FROM?.trim());
+  return isInstanceEmailConfigured();
 }
 
 export function generateTotpSecret(): string {
@@ -364,32 +364,11 @@ export function decryptTwoFactorSecret(payload: string): string {
 }
 
 export async function sendEmailCode({ to, code, purpose }: { to: string; code: string; purpose: EmailCodePurpose }): Promise<void> {
-  const host = process.env.TWO_FACTOR_SMTP_HOST?.trim();
-  const from = process.env.TWO_FACTOR_EMAIL_FROM?.trim();
-  if (!host || !from) throw new Error("Email two-factor delivery is not configured");
-  const security = process.env.TWO_FACTOR_SMTP_SECURITY?.trim().toLowerCase() || "starttls";
-  if (!["tls", "starttls", "none"].includes(security)) throw new Error("TWO_FACTOR_SMTP_SECURITY must be tls, starttls, or none");
-  const port = Number.parseInt(process.env.TWO_FACTOR_SMTP_PORT || (security === "tls" ? "465" : "587"), 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("TWO_FACTOR_SMTP_PORT is invalid");
-  const client = new SMTPClient({
-    host,
-    port,
-    user: process.env.TWO_FACTOR_SMTP_USER || "",
-    password: process.env.TWO_FACTOR_SMTP_PASSWORD || "",
-    ssl: security === "tls",
-    tls: security === "starttls",
-    timeout: 10_000,
+  await sendInstanceEmail({
+    to,
+    subject: purpose === "setup" ? "Confirm Wallaby two-factor authentication" : "Your Wallaby sign-in code",
+    text: `${code} is your Wallaby ${purpose === "setup" ? "two-factor setup" : "sign-in"} code. It expires in 10 minutes. If you did not request it, you can ignore this message.`,
   });
-  try {
-    await client.sendAsync({
-      from,
-      to,
-      subject: purpose === "setup" ? "Confirm Wallaby two-factor authentication" : "Your Wallaby sign-in code",
-      text: `${code} is your Wallaby ${purpose === "setup" ? "two-factor setup" : "sign-in"} code. It expires in 10 minutes. If you did not request it, you can ignore this message.`,
-    });
-  } finally {
-    client.smtp.close(true);
-  }
 }
 
 function encryptionKey(): Buffer {

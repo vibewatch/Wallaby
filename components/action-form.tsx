@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
 
 import { ConfirmForm } from "@/components/confirm-form";
@@ -25,14 +26,17 @@ type Props = {
  * client the result to announce once it is available.
  */
 export function ActionForm({ action, children, className, id, confirmation }: Props) {
-  const [state, formAction] = useActionState(action, null);
+  const [state, formAction, pending] = useActionState(action, null);
   const toast = useToast();
+  const router = useRouter();
 
   useEffect(() => {
-    if (state) toast(state);
-  }, [state, toast]);
+    if (!state) return;
+    toast(state);
+    if (state.navigate?.startsWith("/") && !state.navigate.startsWith("//")) router.push(state.navigate);
+  }, [router, state, toast]);
 
   return confirmation
-    ? <ConfirmForm action={formAction} className={className} id={id} confirm={confirmation.message} confirmWhen={confirmation}>{children}</ConfirmForm>
-    : <form action={formAction} className={className} id={id}>{children}</form>;
+    ? <ConfirmForm action={formAction} className={className} id={id} confirm={confirmation.message} confirmWhen={confirmation} busy={pending}>{children}</ConfirmForm>
+    : <form action={formAction} className={className} id={id} aria-busy={pending || undefined}>{children}</form>;
 }

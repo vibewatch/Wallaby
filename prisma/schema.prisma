@@ -49,6 +49,7 @@ model User {
   trustedDevices   TrustedDevice[]
   recoveryCodes    RecoveryCode[]
   signInGrants     SignInGrant[]
+  passwordResetTokens PasswordResetToken[]
 }
 
 model Account {
@@ -130,6 +131,7 @@ model Entry {
   @@index([userId, starred, starredAt])
   @@index([userId, domainName])
   @@index([userId, language])
+  @@index([userId, readingProgressAt])
 }
 
 model Tag {
@@ -171,6 +173,8 @@ model UserPreference {
   feedLimit         Int     @default(50)
   readingSpeed      Float   @default(200)
   actionMarkAsRead  Boolean @default(false)
+  /// Where the reader goes after archiving: "stay", "next" entry in the list, or back to the "list".
+  afterArchive      String  @default("stay")
   listMode          Boolean @default(false)
   displayThumbnails Boolean @default(true)
   theme             String  @default("auto")
@@ -455,6 +459,20 @@ model SignInGrant {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
+}
+
+/// A single-use password reset link sent by email. Only the SHA-256 of the
+/// token is stored, so a database leak cannot be replayed as a reset.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }
 
 model AuthThrottle {

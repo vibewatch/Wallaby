@@ -6,6 +6,8 @@ export const proxy = auth((request) => {
   const publicPath =
     request.nextUrl.pathname === "/auth/signin" ||
     request.nextUrl.pathname === "/auth/two-factor" ||
+    request.nextUrl.pathname === "/auth/forgot" ||
+    request.nextUrl.pathname.startsWith("/auth/reset/") ||
     isInstallAsset(request.nextUrl.pathname) ||
     request.nextUrl.pathname.startsWith("/share/") ||
     request.nextUrl.pathname.startsWith("/media/") ||
@@ -13,7 +15,8 @@ export const proxy = auth((request) => {
     request.nextUrl.pathname.startsWith("/api/");
   if (!request.auth && !publicPath) {
     const signIn = new URL("/auth/signin", request.nextUrl.origin);
-    signIn.searchParams.set("callbackUrl", request.nextUrl.pathname);
+    // Keep the query: a bookmarklet or share-sheet save must survive signing in.
+    signIn.searchParams.set("callbackUrl", `${request.nextUrl.pathname}${request.nextUrl.search}`);
     return NextResponse.redirect(signIn);
   }
   return NextResponse.next();
@@ -34,5 +37,5 @@ function isInstallAsset(pathname: string): boolean {
 }
 
 export const config = {
-  matcher: ["/((?!api/|auth/signin|auth/two-factor|share|media/|feed/|_next/static|_next/image|favicon.ico|manifest.webmanifest|apple-icon.png|sw.js|offline|icon[-.]).*)"],
+  matcher: ["/((?!api/|auth/signin|auth/two-factor|auth/forgot|auth/reset/|share|media/|feed/|_next/static|_next/image|favicon.ico|manifest.webmanifest|apple-icon.png|sw.js|offline|icon[-.]).*)"],
 };

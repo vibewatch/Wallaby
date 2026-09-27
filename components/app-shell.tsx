@@ -14,7 +14,9 @@ type AppShellProps = {
   user: { name?: string | null; email?: string | null; role: "USER" | "ADMIN" };
   theme: Theme;
   counts: { all: number; unread: number; archive: number; starred: number; annotated: number; untagged: number };
+  /** The most used tags, at most eight. */
   tags: { id: string; label: string; slug: string; _count: { entries: number } }[];
+  tagCount: number;
 };
 
 const navigation = [
@@ -26,7 +28,7 @@ const navigation = [
   { key: "untagged", label: "Untagged", icon: Tags },
 ];
 
-export function AppShell({ children, user, theme, counts, tags }: AppShellProps) {
+export function AppShell({ children, user, theme, counts, tags, tagCount }: AppShellProps) {
   return (
     <ToastProvider>
       <div className="app-shell">
@@ -47,11 +49,13 @@ export function AppShell({ children, user, theme, counts, tags }: AppShellProps)
           </nav>
           <nav className="sidebar-nav tag-nav" aria-label="Tags">
             <p className="nav-heading"><span>Tags</span><Tags size={14} /></p>
-            {tags.slice(0, 8).map((tag) => (
-              <Link href={`/entries?tag=${encodeURIComponent(tag.slug)}`} key={tag.id}>
+            {tags.map((tag) => (
+              // The count covers every entry with the tag, so the link must too.
+              <Link href={`/entries?view=all&tag=${encodeURIComponent(tag.slug)}`} key={tag.id}>
                 <span className="tag-dot" /> <span>{tag.label}</span><small>{tag._count.entries}</small>
               </Link>
             ))}
+            {tagCount ? <Link href="/entries/tags" className="all-tags-link"><Tags size={15} /><span>All tags</span><small>{tagCount}</small></Link> : null}
             {!tags.length ? <p className="sidebar-empty">Tags appear here as you organize entries.</p> : null}
           </nav>
           <MobileMenu isAdmin={user.role === "ADMIN"} />

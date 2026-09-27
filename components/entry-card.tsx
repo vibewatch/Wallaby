@@ -3,11 +3,14 @@ import Link from "next/link";
 
 import { ActionForm } from "@/components/action-form";
 import { toggleArchived, toggleStarred } from "@/lib/actions";
+import { entryHref } from "@/lib/entry-list";
 import { clampProgress, isFinished, isStarted, progressLabel } from "@/lib/reading-progress";
 import { searchSnippet, type LibraryEntry, type SearchTokens } from "@/lib/search";
 
-export function EntryCard({ entry, selectionFormId, highlight = null, compact = false, displayThumbnail = true, readingSpeed = 200 }: {
+export function EntryCard({ entry, list = "", selectionFormId, highlight = null, compact = false, displayThumbnail = true, readingSpeed = 200 }: {
   entry: LibraryEntry;
+  /** The library query this card is listed under, so the reader can return to it. */
+  list?: string;
   selectionFormId?: string;
   /** Search terms to preview in context instead of the stored summary. */
   highlight?: SearchTokens | null;
@@ -19,11 +22,12 @@ export function EntryCard({ entry, selectionFormId, highlight = null, compact = 
   const starAction = toggleStarred.bind(null, entry.id);
   const progress = clampProgress(entry.readingProgress);
   const progressText = progressLabel(progress);
+  const href = entryHref(entry.id, list);
   const snippet = highlight ? searchSnippet(entry.content ?? "", highlight) : null;
   return (
     <article className={`entry-card${compact ? " compact" : ""}${displayThumbnail ? "" : " no-thumbnail"}`} data-entry-card={entry.id}>
       {selectionFormId ? <input className="entry-select" type="checkbox" name="ids" value={entry.id} form={selectionFormId} aria-label={`Select ${entry.title}`} /> : null}
-      {displayThumbnail ? <Link href={`/entries/${entry.id}`} className="entry-cover" aria-label={`Read ${entry.title}`}>
+      {displayThumbnail ? <Link href={href} className="entry-cover" aria-label={`Read ${entry.title}`}>
         {entry.previewPicture ? <span style={{ backgroundImage: `url(${JSON.stringify(entry.previewPicture).slice(1, -1)})` }} /> : <span className="cover-placeholder">{entry.domainName?.slice(0, 1).toUpperCase() ?? "W"}</span>}
       </Link> : null}
       <div className="entry-card-body">
@@ -32,7 +36,7 @@ export function EntryCard({ entry, selectionFormId, highlight = null, compact = 
           <span>·</span>
           <span>{relativeDate(entry.createdAt)}</span>
         </div>
-        <Link href={`/entries/${entry.id}`} className="entry-title" data-shortcut="open"><h2>{entry.title}</h2></Link>
+        <Link href={href} className="entry-title" data-shortcut="open"><h2>{entry.title}</h2></Link>
         {snippet ? (
           <p className="entry-summary">{snippet.map((part, index) => part.match ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>)}</p>
         ) : entry.summary ? <p className="entry-summary">{entry.summary}</p> : null}

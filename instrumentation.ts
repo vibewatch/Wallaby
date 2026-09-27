@@ -13,11 +13,19 @@ export function register() {
   }
 }
 
+/**
+ * React aborts a streaming render with this message when the browser stops
+ * reading it, as when the reader navigates on before a page finishes. That is
+ * not a server failure and must not trip alerts on `request.failed`.
+ */
+const CLIENT_DISCONNECTED = "The destination stream closed early.";
+
 export const onRequestError: Instrumentation.onRequestError = async (error, _request, context) => {
   const digest = typeof error === "object" && error !== null && "digest" in error ? String(error.digest) : undefined;
-  console.error(JSON.stringify({
-    level: "error",
-    event: "request.failed",
+  const disconnected = error instanceof Error && error.message === CLIENT_DISCONNECTED;
+  (disconnected ? console.info : console.error)(JSON.stringify({
+    level: disconnected ? "info" : "error",
+    event: disconnected ? "request.aborted" : "request.failed",
     service: "wallaby",
     errorType: error instanceof Error ? error.name : typeof error,
     digest,

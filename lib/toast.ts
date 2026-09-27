@@ -16,7 +16,8 @@ export type UndoToken =
   | { kind: "archive"; on: string[]; off: string[] }
   | { kind: "star"; on: string[]; off: string[] };
 
-export type ActionResult = { message: string; tone?: ToastTone; undo?: UndoToken } | null;
+/** `navigate` is a same-origin path the client moves to after announcing the result. */
+export type ActionResult = { message: string; tone?: ToastTone; undo?: UndoToken; navigate?: string } | null;
 
 export const undoKinds = ["archive", "star"] as const;
 

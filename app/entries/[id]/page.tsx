@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, ExternalLink, Highlighter, RefreshCw, Share2, Star, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, ExternalLink, Highlighter, RefreshCw, Share2, Star, Trash2, X } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -8,6 +8,7 @@ import { ArticleAnnotator } from "@/components/article-annotator";
 import { ActionForm } from "@/components/action-form";
 import { ConfirmForm } from "@/components/confirm-form";
 import { ReadingProgress } from "@/components/reading-progress";
+import { TagInput } from "@/components/tag-input";
 import {
   addAnnotation,
   addTag,
@@ -15,33 +16,44 @@ import {
   deleteEntry,
   refetchEntry,
   removeTag,
-  toggleArchived,
+  toggleArchivedInReader,
   toggleShare,
   toggleStarred,
+  updateAnnotation,
   updateEntryTitle,
 } from "@/lib/actions";
 import { requireUser } from "@/lib/auth-user";
 import { db } from "@/lib/db";
+import { tagSuggestions } from "@/lib/entries";
+import { entryHref, findListNeighbours, libraryHref, readListParam } from "@/lib/entry-list";
 
-type PageProps = { params: Promise<{ id: string }> };
+type PageProps = { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> };
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const user = await requireUser();
   const { id } = await params;
-  const entry = await db.entry.findUnique({ where: { id }, select: { title: true } });
+  // Scoped to the owner: the document title must not reveal another reader's entry.
+  const entry = await db.entry.findFirst({ where: { id, userId: user.id }, select: { title: true } });
   return { title: entry?.title ?? "Entry" };
 }
 
-export default async function EntryPage({ params }: PageProps) {
+export default async function EntryPage({ params, searchParams }: PageProps) {
   const user = await requireUser();
   const { id } = await params;
-  const [entry, preference] = await Promise.all([
+  const query = await searchParams;
+  const alreadySaved = query.saved === "existing";
+  // Present only when the entry was opened from a library list.
+  const list = readListParam(query.list);
+  const [entry, preference, tagLabels] = await Promise.all([
     db.entry.findFirst({
       where: { id, userId: user.id },
       include: { tags: true, annotations: { orderBy: { createdAt: "desc" } } },
     }),
     db.userPreference.findUnique({ where: { userId: user.id } }),
+    tagSuggestions(user.id),
   ]);
   if (!entry) notFound();
+  const neighbours = list ? await findListNeighbours(user.id, list, entry, preference?.readingSpeed ?? 200) : null;
 
   const authors = Array.isArray(entry.publishedBy) ? entry.publishedBy.filter((value): value is string => typeof value === "string") : [];
   const readerStyle = {
@@ -55,14 +67,15 @@ export default async function EntryPage({ params }: PageProps) {
     <div className="reader-page">
       <ReadingProgress key={entry.id} entryId={entry.id} initialProgress={entry.readingProgress} archiveOnFinish={preference?.actionMarkAsRead ?? false} />
       <header className="reader-toolbar">
-        <Link href="/entries" className="back-link"><ArrowLeft size={17} /> Library</Link>
+        <Link href={libraryHref(list)} className="back-link" data-shortcut="back"><ArrowLeft size={17} /> Library</Link>
         <div className="reader-actions">
           <ActionForm action={toggleStarred.bind(null, entry.id)}><button data-shortcut="star" className={entry.starred ? "active" : ""} title="Star"><Star size={17} fill={entry.starred ? "currentColor" : "none"} /></button></ActionForm>
-          <ActionForm action={toggleArchived.bind(null, entry.id)}><button data-shortcut="archive" className={entry.archived ? "active" : ""} title={entry.archived ? "Mark unread" : "Archive"}><Archive size={17} /></button></ActionForm>
-          <form action={refetchEntry.bind(null, entry.id)}><button data-shortcut="refetch" title="Fetch article again"><RefreshCw size={17} /></button></form>
+          <ActionForm action={toggleArchivedInReader.bind(null, entry.id)}><input type="hidden" name="list" value={list} /><button data-shortcut="archive" className={entry.archived ? "active" : ""} title={entry.archived ? "Mark unread" : "Archive"}><Archive size={17} /></button></ActionForm>
+          <ActionForm action={refetchEntry.bind(null, entry.id)}><button data-shortcut="refetch" title="Fetch article again"><RefreshCw size={17} /></button></ActionForm>
           <form action={toggleShare.bind(null, entry.id)}><button className={entry.shareToken ? "active" : ""} title="Public sharing"><Share2 size={17} /></button></form>
           <a href={entry.url} target="_blank" rel="noopener noreferrer" title="Open original" data-shortcut="original"><ExternalLink size={17} /></a>
           <ConfirmForm action={deleteEntry.bind(null, entry.id)} confirm={`Delete “${entry.title}”? This removes the saved copy and cannot be undone.`}>
+            <input type="hidden" name="list" value={list} />
             <button className="danger-action" title="Delete"><Trash2 size={17} /></button>
           </ConfirmForm>
         </div>
@@ -83,9 +96,10 @@ export default async function EntryPage({ params }: PageProps) {
               {entry.tags.map((tag) => (
                 <span key={tag.id}>#{tag.label}<form action={removeTag.bind(null, entry.id, tag.id)}><button aria-label={`Remove ${tag.label}`}><X size={12} /></button></form></span>
               ))}
-              <details><summary>+ tag</summary><form action={addTag.bind(null, entry.id)}><input name="tags" placeholder="design, research" required /><button>Add</button></form></details>
+              <details><summary>+ tag</summary><form action={addTag.bind(null, entry.id)}><TagInput name="tags" placeholder="design, research" label="Add tags" suggestions={tagLabels.filter((label) => !entry.tags.some((tag) => tag.label === label))} required /><button>Add</button></form></details>
             </div>
             {entry.shareToken ? <p className="share-notice"><Share2 size={14} /> Public link: <Link href={`/share/${entry.shareToken}`}>/share/{entry.shareToken.slice(0, 9)}…</Link></p> : null}
+            {alreadySaved ? <p className="saved-notice" role="status">This article was already in your library — saved {entry.createdAt.toLocaleDateString("en", { dateStyle: "long" })}.</p> : null}
             {entry.isNotParsed ? <p className="extraction-warning">Wallaby could not isolate the full article. You can refetch it or open the original page.</p> : null}
           </header>
           {entry.previewPicture ? <div className="reader-hero" style={{ backgroundImage: `url(${JSON.stringify(entry.previewPicture).slice(1, -1)})` }} /> : null}
@@ -98,6 +112,12 @@ export default async function EntryPage({ params }: PageProps) {
               ranges: Array.isArray(annotation.ranges) ? annotation.ranges.filter(isRangeSelector) : [],
             }))}
           />
+          {neighbours?.previous || neighbours?.next ? (
+            <nav className="reader-pager" aria-label="More in this list">
+              {neighbours.previous ? <Link href={entryHref(neighbours.previous.id, list)} rel="prev" data-shortcut="previous-entry"><ArrowLeft size={16} /><span><small>Previous</small>{neighbours.previous.title}</span></Link> : <span />}
+              {neighbours.next ? <Link href={entryHref(neighbours.next.id, list)} rel="next" data-shortcut="next-entry" className="next"><span><small>Next</small>{neighbours.next.title}</span><ArrowRight size={16} /></Link> : null}
+            </nav>
+          ) : null}
         </article>
 
         <aside className="annotations-panel">
@@ -112,6 +132,14 @@ export default async function EntryPage({ params }: PageProps) {
               <article key={annotation.id}>
                 {annotation.quote ? <blockquote>{annotation.quote}</blockquote> : null}
                 <p>{annotation.text}</p>
+                {/* Keyed on the edit time so a saved edit closes and shows the new text. */}
+                <details className="annotation-edit" key={annotation.updatedAt.toISOString()}>
+                  <summary>Edit note</summary>
+                  <form action={updateAnnotation.bind(null, entry.id, annotation.id)}>
+                    <textarea name="text" defaultValue={annotation.text} rows={4} required maxLength={10_000} aria-label="Note text" />
+                    <button className="secondary-button">Save note</button>
+                  </form>
+                </details>
                 <footer><time>{annotation.createdAt.toLocaleDateString()}</time><form action={deleteAnnotation.bind(null, entry.id, annotation.id)}><button>Delete</button></form></footer>
               </article>
             ))}

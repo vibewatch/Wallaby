@@ -12,14 +12,7 @@ import sharp from "sharp";
 import { getMediaRoot, resolveMediaPath } from "../lib/article-images";
 import { identityThrottleKey } from "../lib/auth-throttle";
 import { generateTotp } from "../lib/two-factor";
-
-async function signIn(page: Page, username = "demo", password = "wallaby-demo") {
-  await page.goto("/auth/signin");
-  await page.getByLabel("Username or email").fill(username);
-  await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/entries/);
-}
+import { signIn } from "./helpers";
 
 async function followMobileUtilityLink(page: Page, name: string) {
   await page.locator('summary[aria-label="More navigation"]').click();
@@ -57,7 +50,7 @@ test("reader can save extracted content, organize it, annotate it, and share it"
   await page.getByPlaceholder("Optional quote from the article").fill("keeping knowledge available");
   await page.getByPlaceholder("Capture a thought…").fill("This is the core idea to revisit.");
   await page.getByRole("button", { name: "Add note" }).click();
-  await expect(page.getByText("This is the core idea to revisit.")).toBeVisible();
+  await expect(page.getByRole("paragraph").filter({ hasText: "This is the core idea to revisit." })).toBeVisible();
 
   await page.getByTitle("Public sharing").click();
   const shareLink = page.locator(".share-notice a");
@@ -1218,7 +1211,7 @@ test("bulk entry and tag actions share one ownership-checked workflow", async ({
 
   for (const title of titles) await page.getByLabel(`Select ${title}`).check();
   await page.getByLabel("Bulk action").selectOption("tag");
-  await page.getByLabel("Bulk tags").fill(`bulk-${unique}, -not-present`);
+  await page.getByRole("combobox", { name: "Bulk tags" }).fill(`bulk-${unique}, -not-present`);
   const tagResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST" && new URL(response.url()).pathname === "/entries",
   );
@@ -1549,7 +1542,7 @@ test("library search ranks matches, highlights them, and agrees with the export"
 
   try {
     await page.goto(`/entries?view=all&q=${token}`);
-    await expect(page.locator(".results-line")).toContainText("Most relevant first");
+    await expect(page.getByLabel("Sort entries")).toHaveValue("relevance");
     // The title match outranks the same word buried in body text.
     await expect(page.locator(".entry-list .entry-title h2")).toHaveText([titled, bodied, tagged]);
     // Only the body match needs a snippet; the others already show their term.
@@ -1616,7 +1609,7 @@ test("ranked search applies library filters before its candidate limit", async (
     ]) {
       await page.goto(`/entries?${query}`);
       await expect(page.locator(".entry-list .entry-title h2")).toHaveText([matching.title]);
-      await expect(page.locator(".results-line")).toContainText("Most relevant first");
+      await expect(page.getByLabel("Sort entries")).toHaveValue("relevance");
       const exportHref = await page.getByRole("link", { name: "Export results" }).getAttribute("href");
       const exported = await page.request.get(exportHref!);
       expect(await exported.json()).toMatchObject([{ id: matching.id }]);

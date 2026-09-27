@@ -309,6 +309,18 @@ describe("durable import queue", () => {
     expect(failedItem).toMatchObject({ status: "failed", attempts: 3, error: "Import item collections are invalid" });
   });
 
+  it("fails an unsaveable URL on its first attempt instead of retrying it", async () => {
+    const job = await queue.enqueueNormalizedImport(userId, "wallabag", [normalized(`ftp://files.example/${randomUUID()}`, "Not a web page")]);
+
+    await queue.processImportJob(job.id, { now: new Date("2030-02-02T00:00:00Z") });
+    const [failedJob, failedItem] = await Promise.all([
+      dbModule.db.importJob.findUniqueOrThrow({ where: { id: job.id } }),
+      dbModule.db.importJobItem.findFirstOrThrow({ where: { jobId: job.id } }),
+    ]);
+    expect(failedJob).toMatchObject({ status: "failed", failed: 1 });
+    expect(failedItem).toMatchObject({ status: "failed", attempts: 1, error: "Only web addresses can be saved, not ftp: links." });
+  });
+
   it("terminates a fifth job attempt even when an item still has retries left", async () => {
     const job = await queue.enqueueNormalizedImport(userId, "wallabag", [
       normalized(`https://example.com/fifth-attempt-${randomUUID()}`, "Final attempt"),

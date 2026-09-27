@@ -45,6 +45,8 @@ export default async function SettingsPage() {
           <label><span>Text size</span><input type="number" name="fontSize" min="0.75" max="2" step="0.05" defaultValue={preference.fontSize} /></label>
           <label><span>Line height</span><input type="number" name="lineHeight" min="1.2" max="2.5" step="0.05" defaultValue={preference.lineHeight} /></label>
           <label><span>Reader width (px)</span><input type="number" name="maxWidth" min="480" max="1400" defaultValue={preference.maxWidth} /></label>
+          <label><span>After archiving an entry</span><select name="afterArchive" defaultValue={preference.afterArchive}><option value="stay">Stay on it</option><option value="next">Open the next entry in the list</option><option value="list">Return to the list</option></select></label>
+          <label className="settings-toggle"><input type="checkbox" name="actionMarkAsRead" value="1" defaultChecked={preference.actionMarkAsRead} /><span>Archive entries when I finish reading them</span></label>
           <label className="settings-toggle"><input type="checkbox" name="listMode" value="1" defaultChecked={preference.listMode} /><span>Use compact list cards</span></label>
           <label className="settings-toggle"><input type="checkbox" name="displayThumbnails" value="1" defaultChecked={preference.displayThumbnails} /><span>Display article thumbnails</span></label>
           <label className="custom-css-field"><span>Custom article CSS declarations</span><textarea name="customCss" rows={4} defaultValue={preference.customCss ?? ""} placeholder="letter-spacing: .01em; text-align: justify;" /></label>
@@ -72,7 +74,7 @@ export default async function SettingsPage() {
           </div>
         </div>
       </section>
-      <section className="settings-section">
+      <section className="settings-section" id="tags">
         <div className="settings-label"><Tags size={18} /><div><h2>Tags</h2><p>Rename, merge, or remove library-wide labels.</p></div></div>
         <div className="settings-content tag-manager">
           <p className="rule-help">Renaming a tag to an existing label merges their entries without duplicates.</p>

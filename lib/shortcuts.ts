@@ -55,7 +55,9 @@ export const shortcutGroups: ShortcutGroup[] = [
       { keys: "e", description: "Archive or unarchive" },
       { keys: "r", description: "Fetch the article again" },
       { keys: "v", description: "Open the original article in a new tab" },
-      { keys: "b", description: "Back to the library" },
+      { keys: "n", description: "Next entry in the list" },
+      { keys: "p", description: "Previous entry in the list" },
+      { keys: "b", description: "Back to the list" },
     ],
   },
 ];

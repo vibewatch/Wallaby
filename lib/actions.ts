@@ -7,14 +7,18 @@ import { AuthError } from "next-auth";
 import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { z } from "zod";
 
 import { deleteEntriesWithMedia, removeUserMediaDirectory } from "@/lib/article-images";
 import { signIn, signOut } from "@/auth";
 import { requireAdmin, requireUser } from "@/lib/auth-user";
 import { applyBulkEntryAction, bulkEntryActions } from "@/lib/bulk";
+import { ownedEntryIds, startBulkRefetch } from "@/lib/bulk-refetch";
 import { db } from "@/lib/db";
-import { createEntry, hashUrl, parseTags, reloadEntry, slugify } from "@/lib/entries";
+import { connectTags, createEntryWithResult, EntryNotFoundError, parseTags, reloadEntry, tagSlug } from "@/lib/entries";
+import { afterArchiveChoices, entryHref, findListNeighbours, libraryHref, parseAfterArchive, readListParam } from "@/lib/entry-list";
+import { InvalidEntryUrlError } from "@/lib/entry-url";
 import { validateIgnoreOriginRule } from "@/lib/ignore-origin";
 import { enqueueImportFile, processImportJob } from "@/lib/import-queue";
 import type { ImportSource } from "@/lib/importers";
@@ -27,10 +31,12 @@ import { upsertSiteCredential } from "@/lib/site-credentials";
 import { parseTheme, THEME_COOKIE, type Theme, themes } from "@/lib/theme";
 import { type ActionResult, parseUndoToken, pluralizeEntries, undoFor } from "@/lib/toast";
 import { verifyPasswordCredentials } from "@/lib/password-auth";
+import { isPasswordResetAvailable, requestPasswordReset, resetPassword } from "@/lib/password-reset";
 import { cancelLoginChallenge, confirmEmailSetup, confirmTotpSetup, createEmailSetup, createLoginChallenge, createTotpSetup, disableTwoFactor as disableTwoFactorForUser, isTrustedDevice, issueSignInGrant, isTwoFactorEmailConfigured, isTwoFactorEncryptionConfigured, registerTrustedDevice, regenerateRecoveryCodes, revokeTrustedDevices, TRUSTED_DEVICE_COOKIE, TWO_FACTOR_CHALLENGE_COOKIE, verifyLoginChallenge } from "@/lib/two-factor";
 
-export type SignInState = { error?: string };
+export type SignInState = { error?: string; username?: string };
 export type AccountActionState = { error?: string; message?: string };
+export type PasswordResetState = { error?: string; sent?: boolean };
 export type TwoFactorActionState = {
   error?: string;
   message?: string;
@@ -43,11 +49,14 @@ export type TwoFactorActionState = {
 
 export async function authenticate(_state: SignInState, formData: FormData): Promise<SignInState> {
   const parsed = z.object({ username: z.string().trim().min(1).max(320), password: z.string().min(1).max(200), callbackUrl: z.string().optional() }).safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { error: "The username or password is incorrect." };
+  // Returned with every error so the form can keep what was typed.
+  const typed = formData.get("username");
+  if (!parsed.success) return { error: "The username or password is incorrect.", username: typeof typed === "string" ? typed.slice(0, 320) : undefined };
+  const username = parsed.data.username;
   const redirectTo = safeSignInRedirect(parsed.data.callbackUrl);
   const verification = await verifyPasswordCredentials(parsed.data.username, parsed.data.password, await headers());
-  if (verification.status === "limited") return { error: "Too many sign-in attempts. Wait 15 minutes and try again." };
-  if (verification.status !== "authenticated") return { error: "The username or password is incorrect." };
+  if (verification.status === "limited") return { error: "Too many sign-in attempts. Wait 15 minutes and try again.", username };
+  if (verification.status !== "authenticated") return { error: "The username or password is incorrect.", username };
   const account = verification.user;
   const cookieStore = await cookies();
   if (account.twoFactorMethod === "TOTP" || account.twoFactorMethod === "EMAIL") {
@@ -83,6 +92,42 @@ export async function authenticate(_state: SignInState, formData: FormData): Pro
     if (error instanceof AuthError) return { error: "The username or password is incorrect." };
     throw error;
   }
+}
+
+export async function requestPasswordResetLink(_state: PasswordResetState, formData: FormData): Promise<PasswordResetState> {
+  if (!isPasswordResetAvailable()) return { error: "Password reset by email is not enabled on this instance." };
+  const identifier = z.string().trim().min(1).max(320).safeParse(formData.get("identifier"));
+  if (!identifier.success) return { error: "Enter your username or email." };
+  const request = await requestPasswordReset(identifier.data, { headers: await headers() });
+  if (request.status === "limited") return { error: "Too many reset requests. Wait 15 minutes and try again." };
+  const { deliver } = request;
+  if (deliver) {
+    after(async () => {
+      try { await deliver(); }
+      catch (error) {
+        console.error(JSON.stringify({
+          level: "error",
+          event: "password_reset.delivery_failed",
+          service: "wallaby",
+          errorType: error instanceof Error ? error.name : "UnknownError",
+          timestamp: new Date().toISOString(),
+        }));
+      }
+    });
+  }
+  // The same answer whether or not the account exists.
+  return { sent: true };
+}
+
+export async function completePasswordReset(token: string, _state: PasswordResetState, formData: FormData): Promise<PasswordResetState> {
+  const parsed = z.object({
+    newPassword: z.string().min(8).max(200),
+    confirmPassword: z.string().min(8).max(200),
+  }).safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "The new password must contain at least 8 characters." };
+  if (parsed.data.newPassword !== parsed.data.confirmPassword) return { error: "The new passwords do not match." };
+  if (await resetPassword(token, parsed.data.newPassword) !== "reset") return { error: "This reset link has expired or was already used. Request a new one." };
+  redirect("/auth/signin?reset=1");
 }
 
 export async function completeTwoFactorAuthentication(_state: SignInState, formData: FormData): Promise<SignInState> {
@@ -121,30 +166,78 @@ export async function logout() {
   await signOut({ redirectTo: "/auth/signin" });
 }
 
-export async function addEntry(formData: FormData) {
+export type AddEntryState = { error?: string; url?: string; tags?: string } | null;
+
+/**
+ * Saves a URL and opens it. Extraction failures still save the entry — the
+ * reader offers a refetch — but an address that could never be fetched is
+ * reported inline with the typed values kept, instead of an error page.
+ * Saving a URL that is already in the library opens the existing entry and
+ * files it under any newly supplied tags.
+ */
+export async function addEntry(_state: AddEntryState, formData: FormData): Promise<AddEntryState> {
   const user = await requireUser();
-  const parsed = z.object({ url: z.string().trim().min(1), tags: z.string().optional() }).parse({
-    url: formData.get("url"),
-    tags: formData.get("tags"),
-  });
-  const entry = await createEntry(user.id, { url: parsed.url, tags: parseTags(parsed.tags) });
-  revalidatePath("/entries");
-  redirect(`/entries/${entry.id}`);
+  const url = String(formData.get("url") ?? "").slice(0, 10_000);
+  const tagInput = String(formData.get("tags") ?? "").slice(0, 2_000);
+  const tags = parseTags(tagInput);
+  const fallbackTitle = String(formData.get("fallbackTitle") ?? "").slice(0, 1_000);
+  let result: Awaited<ReturnType<typeof createEntryWithResult>>;
+  try {
+    result = await createEntryWithResult(user.id, { url, tags, fallbackTitle });
+  } catch (error) {
+    if (error instanceof InvalidEntryUrlError) return { error: error.message, url, tags: tagInput };
+    throw error;
+  }
+  if (!result.created && tags.length) {
+    await db.entry.update({ where: { id: result.entry.id }, data: { tags: { connectOrCreate: connectTags(user.id, tags) } } });
+  }
+  revalidatePath("/entries", "layout");
+  redirect(result.created ? `/entries/${result.entry.id}` : `/entries/${result.entry.id}?saved=existing`);
 }
 
 export async function toggleArchived(entryId: string): Promise<ActionResult> {
   const user = await requireUser();
   const entry = await db.entry.findFirst({ where: { id: entryId, userId: user.id }, select: { archived: true } });
   if (!entry) return { message: "That entry is no longer in your library", tone: "danger" };
+  return flipArchived(entryId, entry.archived);
+}
+
+/**
+ * The reader's archive button. Archiving can move on, as the reader's
+ * preference asks, to the next entry of the list they came from or back to
+ * that list. The neighbour is found before the change, while the entry still
+ * holds its place in a list such as Unread.
+ */
+export async function toggleArchivedInReader(entryId: string, _state: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const [entry, preference] = await Promise.all([
+    db.entry.findFirst({ where: { id: entryId, userId: user.id }, select: { id: true, archived: true, createdAt: true, title: true, readingTime: true, publishedAt: true } }),
+    db.userPreference.findUnique({ where: { userId: user.id }, select: { afterArchive: true, readingSpeed: true } }),
+  ]);
+  if (!entry) return { message: "That entry is no longer in your library", tone: "danger" };
+  const list = readListParam(String(formData.get("list") ?? ""));
+  const destination = entry.archived ? "stay" : parseAfterArchive(preference?.afterArchive);
+  let navigate: string | undefined;
+  if (destination === "next") {
+    const { next } = await findListNeighbours(user.id, list, entry, preference?.readingSpeed ?? 200);
+    navigate = next ? entryHref(next.id, list) : libraryHref(list);
+  } else if (destination === "list") {
+    navigate = libraryHref(list);
+  }
+  const result = await flipArchived(entryId, entry.archived);
+  return result && navigate ? { ...result, navigate } : result;
+}
+
+async function flipArchived(entryId: string, archived: boolean): Promise<ActionResult> {
   await db.entry.update({
     where: { id: entryId },
-    data: { archived: !entry.archived, archivedAt: entry.archived ? null : new Date() },
+    data: { archived: !archived, archivedAt: archived ? null : new Date() },
   });
   revalidatePath("/entries");
   revalidatePath(`/entries/${entryId}`);
   return {
-    message: entry.archived ? "Moved back to unread" : "Archived",
-    undo: undoFor("archive", [{ id: entryId, value: entry.archived }]),
+    message: archived ? "Moved back to unread" : "Archived",
+    undo: undoFor("archive", [{ id: entryId, value: archived }]),
   };
 }
 
@@ -185,8 +278,11 @@ const undoableBulkActions: Partial<Record<(typeof bulkEntryActions)[number], "ar
 
 export async function bulkUpdateEntries(_state: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireUser();
-  const action = z.enum(bulkEntryActions).parse(formData.get("action"));
   const ids = formData.getAll("ids").map(String);
+  // Refetching is slow and network-bound, so it is offered here but not in the
+  // bulk API, and runs after the response.
+  if (formData.get("action") === "refetch") return refetchSelectedEntries(user.id, ids);
+  const action = z.enum(bulkEntryActions).parse(formData.get("action"));
   const tags = String(formData.get("tags") ?? "");
 
   // Read the prior state before mutating, so undo restores each entry to where
@@ -203,6 +299,23 @@ export async function bulkUpdateEntries(_state: ActionResult, formData: FormData
     message: `${bulkActionLabels[action]} ${pluralizeEntries(count)}`,
     undo: kind ? undoFor(kind, before.map((entry) => ({ id: entry.id, value: kind === "archive" ? entry.archived : entry.starred }))) : undefined,
   };
+}
+
+async function refetchSelectedEntries(userId: string, ids: string[]): Promise<ActionResult> {
+  const owned = await ownedEntryIds(userId, ids);
+  if (!owned.length) return { message: "Nothing to update", tone: "danger" };
+  const started = startBulkRefetch(userId, owned, {
+    schedule: (task) => after(task),
+    onDone: (summary) => console.info(JSON.stringify({
+      level: "info",
+      event: "entries.refetch.completed",
+      service: "wallaby",
+      ...summary,
+      timestamp: new Date().toISOString(),
+    })),
+  });
+  if (!started) return { message: "Entries are already being fetched again. Try once that finishes.", tone: "danger" };
+  return { message: `Fetching ${pluralizeEntries(owned.length)} again. Refresh in a minute to see the new copies.` };
 }
 
 const bulkActionLabels: Record<(typeof bulkEntryActions)[number], string> = {
@@ -246,17 +359,35 @@ export async function undoAction(token: unknown): Promise<ActionResult> {
     : { message: "There is nothing left to undo", tone: "danger" };
 }
 
-export async function deleteEntry(entryId: string) {
+export async function deleteEntry(entryId: string, formData?: FormData) {
   const user = await requireUser();
   await deleteEntriesWithMedia(user.id, { id: entryId });
   revalidatePath("/entries");
-  redirect("/entries");
+  redirect(libraryHref(readListParam(String(formData?.get("list") ?? ""))));
 }
 
-export async function refetchEntry(entryId: string) {
+/**
+ * A refetch replaces the saved copy only when the new fetch succeeds, so an
+ * unreachable publisher leaves the reader intact with a toast, not an error page.
+ */
+export async function refetchEntry(entryId: string): Promise<ActionResult> {
   const user = await requireUser();
-  await reloadEntry(user.id, entryId);
-  revalidatePath(`/entries/${entryId}`);
+  try {
+    const entry = await reloadEntry(user.id, entryId);
+    revalidatePath("/entries");
+    revalidatePath(`/entries/${entryId}`);
+    return entry.isNotParsed
+      ? { message: "Fetched again, but the full article could not be isolated", tone: "danger" }
+      : { message: "Fetched a fresh copy", tone: "success" };
+  } catch (error) {
+    if (error instanceof EntryNotFoundError) return { message: "That entry is no longer in your library", tone: "danger" };
+    return { message: `The article could not be fetched: ${fetchFailureReason(error)}`, tone: "danger" };
+  }
+}
+
+function fetchFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  return message ? message.slice(0, 160) : "the publisher did not respond";
 }
 
 export async function addTag(entryId: string, formData: FormData) {
@@ -264,17 +395,7 @@ export async function addTag(entryId: string, formData: FormData) {
   const labels = parseTags(String(formData.get("tags") ?? ""));
   const entry = await db.entry.findFirst({ where: { id: entryId, userId: user.id }, select: { id: true } });
   if (!entry || !labels.length) return;
-  await db.entry.update({
-    where: { id: entryId },
-    data: {
-      tags: {
-        connectOrCreate: labels.map((label) => ({
-          where: { userId_slug: { userId: user.id, slug: slugify(label) } },
-          create: { userId: user.id, label, slug: slugify(label) },
-        })),
-      },
-    },
-  });
+  await db.entry.update({ where: { id: entryId }, data: { tags: { connectOrCreate: connectTags(user.id, labels) } } });
   revalidatePath(`/entries/${entryId}`);
 }
 
@@ -289,7 +410,7 @@ export async function removeTag(entryId: string, tagId: string) {
 export async function renameTag(tagId: string, formData: FormData) {
   const user = await requireUser();
   const label = z.string().trim().min(1).max(120).parse(formData.get("label"));
-  const slug = slugify(label) || hashUrl(label).slice(0, 12);
+  const slug = tagSlug(label);
   const current = await db.tag.findFirst({ where: { id: tagId, userId: user.id }, include: { entries: { select: { id: true } } } });
   if (!current) throw new Error("Tag not found");
   if (current.slug === slug && current.label === label) return;
@@ -325,6 +446,14 @@ export async function addAnnotation(entryId: string, formData: FormData) {
   revalidatePath(`/entries/${entryId}`);
 }
 
+export async function updateAnnotation(entryId: string, annotationId: string, formData: FormData) {
+  const user = await requireUser();
+  const text = z.string().trim().min(1).max(10_000).safeParse(formData.get("text"));
+  if (!text.success) return;
+  await db.annotation.updateMany({ where: { id: annotationId, entryId, userId: user.id }, data: { text: text.data } });
+  revalidatePath(`/entries/${entryId}`);
+}
+
 export async function deleteAnnotation(entryId: string, annotationId: string) {
   const user = await requireUser();
   await db.annotation.deleteMany({ where: { id: annotationId, entryId, userId: user.id } });
@@ -356,8 +485,10 @@ export async function updatePreferences(formData: FormData) {
     fontSize: z.coerce.number().min(0.75).max(2),
     lineHeight: z.coerce.number().min(1.2).max(2.5),
     maxWidth: z.coerce.number().int().min(480).max(1_400),
+    afterArchive: z.enum(afterArchiveChoices).catch("stay"),
   }).parse(values);
   const presentation = {
+    actionMarkAsRead: formData.get("actionMarkAsRead") === "1",
     listMode: formData.get("listMode") === "1",
     displayThumbnails: formData.get("displayThumbnails") === "1",
     customCss: sanitizeReaderCss(String(formData.get("customCss") ?? "")),
@@ -672,6 +803,7 @@ export async function changePassword(_state: AccountActionState, formData: FormD
     db.trustedDevice.deleteMany({ where: { userId: user.id } }),
     db.twoFactorChallenge.deleteMany({ where: { userId: user.id } }),
     db.signInGrant.deleteMany({ where: { userId: user.id } }),
+    db.passwordResetToken.deleteMany({ where: { userId: user.id } }),
   ]);
   await signOut({ redirectTo: "/auth/signin" });
   return {};
@@ -839,6 +971,7 @@ export async function resetManagedUserPassword(userId: string, formData: FormDat
     db.trustedDevice.deleteMany({ where: { userId } }),
     db.twoFactorChallenge.deleteMany({ where: { userId } }),
     db.signInGrant.deleteMany({ where: { userId } }),
+    db.passwordResetToken.deleteMany({ where: { userId } }),
   ]);
   revalidatePath("/entries/admin");
 }

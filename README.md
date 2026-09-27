@@ -8,14 +8,17 @@ The repository is evidence-driven about its wallabag compatibility surface. The 
 
 - Credentials authentication through Auth.js, with Prisma-backed users and adapter tables
 - Authenticator-app or SMTP email two-factor authentication, single-use recovery codes, and revocable 15-day trusted devices
-- Save a URL, securely fetch it, extract a readable copy, and deduplicate per user
-- Unread, archive, starred, all, annotated, tag, and untagged library views
+- Self-service password reset by single-use, 30-minute email link when instance email is configured; a reset signs out every device and keeps two-factor authentication on
+- Save a URL from the library, a bookmarklet, or the installed app's share sheet; securely fetch it, extract a readable copy, and deduplicate per user (saving a known URL merges its new tags)
+- Unread, archive, starred, all, annotated, tag, and untagged library views, sortable by saved date, title, reading time, or publication date (kept across paging, search, and export)
 - Ranked full-text search with prefix and quoted-phrase matching, highlighted result snippets, and a portable substring fallback
-- Responsive article reader, tags, notes, archive/star/refetch/delete actions, and public share links
+- A tag index that groups every tag by initial or orders it by use, with a filter; the sidebar lists the most-used tags
+- Responsive article reader, tags, notes, archive/star/refetch/delete actions, and public share links; the reader remembers the list it was opened from for previous/next stepping, the back link, and an optional move-on after archiving
 - Light, dark, and system-following themes applied before first paint
 - Per-entry reading progress with reconnect retries and a resume prompt, and a keyboard layer covering navigation, entry actions, and reader controls
 - Installable as a progressive web app with an offline shell that never caches saved articles
 - Toast feedback with undo for archive, star, and bulk actions, and inline confirmation for individual and bulk entry deletion
+- Bulk "Fetch again" for selected entries (for example, under the **Extraction failed** filter), run in the background three at a time; a failed fetch keeps the saved copy
 - Per-user reading preferences, private Atom feed tokens, and hashed bearer API tokens
 - Profile, password, scoped data-reset, cross-browser session revocation, and account-deletion workflows
 - Administrator user/role/password management and instance-wide redirect-origin policy
@@ -42,7 +45,7 @@ Open `http://localhost:3000` and use the seeded local account:
 - username: `demo` (administrator on a fresh seed)
 - password: `wallaby-demo`
 
-Replace `AUTH_SECRET` and `SITE_CREDENTIALS_KEY` before using Wallaby outside local development. The latter must decode to exactly 32 random bytes and protects publication usernames/passwords with AES-256-GCM. Authenticator-app 2FA encrypts TOTP secrets with `TWO_FACTOR_KEY` when provided, or a domain-separated key derived from a strong `AUTH_SECRET`; email-code 2FA additionally requires the `TWO_FACTOR_SMTP_*` and `TWO_FACTOR_EMAIL_FROM` settings documented in `.env.example`. SQLite is the zero-configuration default; the Prisma schema is deliberately portable so a PostgreSQL deployment can become a supported profile.
+Replace `AUTH_SECRET` and `SITE_CREDENTIALS_KEY` before using Wallaby outside local development. The latter must decode to exactly 32 random bytes and protects publication usernames/passwords with AES-256-GCM. Authenticator-app 2FA encrypts TOTP secrets with `TWO_FACTOR_KEY` when provided, or a domain-separated key derived from a strong `AUTH_SECRET`; email-code 2FA and password reset additionally require the `TWO_FACTOR_SMTP_*` and `TWO_FACTOR_EMAIL_FROM` settings documented in `.env.example`; reset links are built only from `AUTH_URL`, never from request headers. SQLite is the zero-configuration default; the Prisma schema is deliberately portable so a PostgreSQL deployment can become a supported profile.
 
 ## Verification
 
@@ -77,10 +80,11 @@ npm run entries:reload -- demo --only-not-parsed --yes
 npm run entries:dedupe -- demo
 npm run tag:all -- demo
 npm run images:cleanup -- --dry-run
+npm run maintenance:prune -- --dry-run
 npm run oauth:create-client -- demo --redirect-uri=https://reader.example/oauth/callback --format=env
 ```
 
-File imports accept wallabag's importer names and `--markAsRead`, `--useUserId`, and `--disableContentUpdate` spellings as well as kebab-case equivalents. Add `--queue-only` when a separate worker should claim the new job. Exports refuse to overwrite a file unless `--force` is supplied. Duplicate cleanup retains the oldest entry while merging status, tags, and annotations and removing the duplicate's local media.
+File imports accept wallabag's importer names and `--markAsRead`, `--useUserId`, and `--disableContentUpdate` spellings as well as kebab-case equivalents. Add `--queue-only` when a separate worker should claim the new job. Exports refuse to overwrite a file unless `--force` is supplied. Duplicate cleanup retains the oldest entry while merging status, tags, and annotations and removing the duplicate's local media. `maintenance:prune` deletes expired sign-in, two-factor, password-reset, OAuth, and Pocket credentials, stale throttle counters, and the item payloads of imports finished more than 30 days ago (job summaries stay); a continuous import worker runs it hourly.
 
 OAuth2 applications can also be created and revoked under **Settings → API access → Manage developer clients**. Wallaby exposes `/oauth/v2/auth` and `/oauth/v2/token` with authorization-code (including S256 PKCE), rotating refresh-token, password, and legacy implicit grants. Access tokens expire after one hour; refresh tokens expire after 30 days and rotate on every use. Password grants are rejected for accounts with two-factor authentication. Client secrets, access tokens, refresh tokens, and authorization codes are stored only as SHA-256 hashes.
 

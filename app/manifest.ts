@@ -3,7 +3,7 @@ import type { MetadataRoute } from "next";
 /**
  * Web app manifest. Installing Wallaby should feel like opening a reader, so it
  * launches standalone straight into the unread queue, with shortcuts for the
- * two things people reach for from a home screen: saving and starred reading.
+ * things people reach for from a home screen: saving, unread, starred, search.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -24,7 +24,15 @@ export default function manifest(): MetadataRoute.Manifest {
       { src: "/icon-maskable-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
       { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
+    // Installed on Android, Wallaby appears in the system share sheet. GET keeps
+    // the target a pre-filled form; saving still takes an explicit click.
+    share_target: {
+      action: "/entries/new",
+      method: "GET",
+      params: { title: "title", text: "text", url: "url" },
+    },
     shortcuts: [
+      { name: "Save an article", short_name: "Save", url: "/entries/new" },
       { name: "Unread", short_name: "Unread", url: "/entries?view=unread" },
       { name: "Starred", short_name: "Starred", url: "/entries?view=starred" },
       { name: "Search", short_name: "Search", url: "/entries?view=all&focus=search" },

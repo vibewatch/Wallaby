@@ -5,6 +5,7 @@ import type { Content } from "@wallaby/extractor";
 
 import { localizeEntryImages } from "@/lib/article-images";
 import { db } from "@/lib/db";
+import { parseEntryUrl } from "@/lib/entry-url";
 import { getExtractor } from "@/lib/extractor";
 import { resolveEntryRedirect } from "@/lib/ignore-origin";
 import { findSiteCredential } from "@/lib/site-credentials";
@@ -16,6 +17,8 @@ export { parseTags, stripHtml } from "@/lib/text";
 export type EntryInput = {
   url: string;
   title?: string | null;
+  /** A caller-supplied title that yields to the extracted one, e.g. the bookmarked tab's title. */
+  fallbackTitle?: string | null;
   content?: string | null;
   tags?: string[];
   archived?: boolean;
@@ -43,6 +46,18 @@ export function slugify(value: string): string {
     .slice(0, 120);
 }
 
+/** Labels made only of symbols slugify to nothing; hash them so they stay distinct. */
+export function tagSlug(label: string): string {
+  return slugify(label) || hashUrl(label).slice(0, 12);
+}
+
+export function connectTags(userId: string, labels: string[]): Prisma.TagCreateOrConnectWithoutEntriesInput[] {
+  return labels.map((label) => ({
+    where: { userId_slug: { userId, slug: tagSlug(label) } },
+    create: { userId, label, slug: tagSlug(label) },
+  }));
+}
+
 export async function createEntry(userId: string, input: EntryInput) {
   return (await createEntryWithResult(userId, input)).entry;
 }
@@ -52,7 +67,7 @@ export async function createEntryWithResult(
   input: EntryInput,
   beforePublish?: EntryPublicationGuard,
 ) {
-  const normalized = new URL(input.url.match(/^https?:\/\//i) ? input.url : `https://${input.url}`);
+  const normalized = parseEntryUrl(input.url);
   const givenUrl = normalized.toString();
   const existing = await db.entry.findUnique({
     where: { userId_urlHash: { userId, urlHash: hashUrl(givenUrl) } },
@@ -73,12 +88,8 @@ export async function createEntryWithResult(
   const resolvedUrl = await resolveEntryRedirect(userId, givenUrl, effectiveUrl, input.originUrl ?? null);
   const domainName = new URL(resolvedUrl.url).hostname;
   const plainText = stripHtml(extracted?.html ?? input.content ?? "");
-  const title = input.title?.trim() || extracted?.title || normalized.pathname.split("/").filter(Boolean).at(-1) || domainName;
-  const tags = parseTags(input.tags);
-  const tagConnections: Prisma.TagCreateOrConnectWithoutEntriesInput[] = tags.map((label) => ({
-    where: { userId_slug: { userId, slug: slugify(label) || hashUrl(label).slice(0, 12) } },
-    create: { userId, label, slug: slugify(label) || hashUrl(label).slice(0, 12) },
-  }));
+  const title = input.title?.trim() || extracted?.title || input.fallbackTitle?.trim() || normalized.pathname.split("/").filter(Boolean).at(-1) || domainName;
+  const tagConnections = connectTags(userId, parseTags(input.tags));
 
   const persist = (client: Prisma.TransactionClient) => client.entry.create({
     data: {
@@ -143,9 +154,22 @@ export async function finalizeEntryCreation(userId: string, entryId: string, bef
   } else await applyTaggingRules(userId, entryId);
 }
 
+/** Labels for tag autocomplete, most used first. */
+export async function tagSuggestions(userId: string): Promise<string[]> {
+  const tags = await db.tag.findMany({ where: { userId }, select: { label: true }, orderBy: [{ entries: { _count: "desc" } }, { label: "asc" }], take: 1_000 });
+  return tags.map(({ label }) => label);
+}
+
+export class EntryNotFoundError extends Error {
+  constructor() {
+    super("Entry not found");
+    this.name = "EntryNotFoundError";
+  }
+}
+
 export async function reloadEntry(userId: string, entryId: string) {
   const entry = await db.entry.findFirst({ where: { id: entryId, userId } });
-  if (!entry) throw new Error("Entry not found");
+  if (!entry) throw new EntryNotFoundError();
   const url = new URL(entry.givenUrl);
   const credential = await findSiteCredential(userId, url.hostname);
   const extracted = await getExtractor().fetchContent(url, undefined, credential);

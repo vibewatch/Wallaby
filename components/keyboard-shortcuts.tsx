@@ -141,12 +141,15 @@ export function KeyboardShortcuts() {
             return;
           case "b":
             event.preventDefault();
-            router.push("/entries");
+            // The back link knows which list the entry was opened from.
+            if (!trigger(document, "back")) router.push("/entries");
             return;
           case "s":
           case "e":
           case "r":
           case "v":
+          case "n":
+          case "p":
             if (trigger(document, readerActions[key])) event.preventDefault();
             return;
         }
@@ -208,5 +211,5 @@ export function KeyboardShortcuts() {
   );
 }
 
-const readerActions: Record<string, string> = { s: "star", e: "archive", r: "refetch", v: "original" };
+const readerActions: Record<string, string> = { s: "star", e: "archive", r: "refetch", v: "original", n: "next-entry", p: "previous-entry" };
 const cardActions: Record<string, string> = { s: "star", e: "archive", v: "original" };

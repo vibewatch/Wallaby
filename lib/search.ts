@@ -154,8 +154,9 @@ export async function resolveEntryQuery(userId: string, filters: EntryFilters, {
 
 type EntryPageArgs = {
   where: Prisma.EntryWhereInput;
-  /** Candidate ids in relevance order, or `null` to order by recency. */
+  /** Candidate ids in relevance order, or `null` to use `orderBy`. */
   ranked: string[] | null;
+  orderBy?: Prisma.EntryOrderByWithRelationInput[];
   page: number;
   pageSize: number;
   includeContent?: boolean;
@@ -180,16 +181,16 @@ const libraryEntrySelect = {
 export type LibraryEntry = Prisma.EntryGetPayload<{ select: typeof libraryEntrySelect }> & { content?: string };
 
 /**
- * Fetches one page of the library. Without a ranking the database paginates by
- * recency directly; with one, the filtered ids are re-sorted into relevance
+ * Fetches one page of the library. Without a ranking the database paginates in
+ * the requested order directly; with one, the filtered ids are re-sorted into relevance
  * order first, because no relational `ORDER BY` can express "the order this
  * list arrived in".
  */
-export async function findEntryPage({ where, ranked, page, pageSize, includeContent = false }: EntryPageArgs): Promise<{ entries: LibraryEntry[]; total: number }> {
+export async function findEntryPage({ where, ranked, orderBy = [{ createdAt: "desc" }, { id: "desc" }], page, pageSize, includeContent = false }: EntryPageArgs): Promise<{ entries: LibraryEntry[]; total: number }> {
   const select = { ...libraryEntrySelect, content: includeContent };
   if (!ranked) {
     const [entries, total] = await Promise.all([
-      db.entry.findMany({ where, select, orderBy: { createdAt: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
+      db.entry.findMany({ where, select, orderBy, skip: (page - 1) * pageSize, take: pageSize }),
       db.entry.count({ where }),
     ]);
     return { entries, total };

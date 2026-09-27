@@ -5,6 +5,7 @@ import type { ImportJob, ImportJobItem, Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { createEntryWithResult, finalizeEntryCreation, hashUrl } from "@/lib/entries";
+import { InvalidEntryUrlError, parseEntryUrl } from "@/lib/entry-url";
 import { parseImport, type ImportSource, type NormalizedImportEntry } from "@/lib/importers";
 import { decryptPocketToken, PocketClient, readPocketJobOptions } from "@/lib/pocket";
 
@@ -319,7 +320,8 @@ async function processImportItem(job: ImportJob, item: ImportJobItem, now: Date)
     }
     const attempts = item.attempts + 1;
     const message = error instanceof Error ? error.message.slice(0, 2_000) : "Entry import failed";
-    await updateClaimedItem(job, item, attempts >= maximumItemAttempts
+    // An unsaveable URL will never succeed, so it does not spend the retry budget.
+    await updateClaimedItem(job, item, attempts >= maximumItemAttempts || error instanceof InvalidEntryUrlError
       ? { status: "failed", error: message, lockedAt: null, workerId: null }
       : { status: "pending", error: message, availableAt: new Date(now.getTime() + retryDelayMs(attempts)), lockedAt: null, workerId: null });
   }
@@ -431,8 +433,7 @@ function decodeImportEntry(payload: Prisma.JsonValue): NormalizedImportEntry {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Import item payload is invalid");
   const candidate = payload as Record<string, Prisma.JsonValue>;
   if (typeof candidate.url !== "string") throw new Error("Import item URL is missing");
-  const url = new URL(candidate.url);
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Import item URL is invalid");
+  const url = parseEntryUrl(candidate.url);
   if (!Array.isArray(candidate.tags) || !Array.isArray(candidate.publishedBy) || !Array.isArray(candidate.annotations)) throw new Error("Import item collections are invalid");
   return {
     url: url.toString(),

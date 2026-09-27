@@ -9,6 +9,7 @@ type Props = {
   children: React.ReactNode;
   className?: string;
   id?: string;
+  busy?: boolean;
 };
 
 /**
@@ -16,7 +17,7 @@ type Props = {
  * JavaScript the confirmation is skipped rather than the action being blocked,
  * so the form keeps working.
  */
-export function ConfirmForm({ action, confirm, confirmWhen, children, className, id }: Props) {
+export function ConfirmForm({ action, confirm, confirmWhen, children, className, id, busy }: Props) {
   const [confirming, setConfirming] = useState(false);
   const confirmButton = useRef<HTMLButtonElement>(null);
   const descriptionId = useId();
@@ -26,6 +27,7 @@ export function ConfirmForm({ action, confirm, confirmWhen, children, className,
       action={action}
       className={className}
       id={id}
+      aria-busy={busy || undefined}
       onChange={() => setConfirming(false)}
       onSubmit={(event) => {
         const needsConfirmation = !confirmWhen || new FormData(event.currentTarget).get(confirmWhen.field) === confirmWhen.value;
