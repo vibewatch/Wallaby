@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 
 import { db } from "@/lib/db";
+import { databaseProvider } from "@/lib/database-provider";
 
 type HeaderSource = { get(name: string): string | null } | undefined;
 type ThrottleKey = { key: string; maximum: number };
@@ -28,6 +29,13 @@ export async function recordAuthFailure(identifier: string, headers?: HeaderSour
   const rules = throttleKeys(identifier, headers);
   const latestBlock = await db.$transaction(async (transaction) => {
     let transactionBlock: Date | null = null;
+    if (databaseProvider() === "postgresql") {
+      // SQLite serializes writers; PostgreSQL needs keyed transaction locks to
+      // keep concurrent read/modify/write counters from losing failures.
+      for (const { key } of [...rules].sort((first, second) => first.key.localeCompare(second.key))) {
+        await transaction.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      }
+    }
     await transaction.authThrottle.deleteMany({ where: { updatedAt: { lt: new Date(now.getTime() - retentionMs) } } });
     for (const rule of rules) {
       const current = await transaction.authThrottle.findUnique({ where: { key: rule.key } });

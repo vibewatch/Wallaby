@@ -20,12 +20,20 @@ export function validateProductionEnvironment(env: Environment = process.env): {
 
   const databaseUrl = value(env, "DATABASE_URL");
   if (!databaseUrl) issues.push("DATABASE_URL is required");
-  else if (!databaseUrl.startsWith("file:")) issues.push("DATABASE_URL must use the SQLite file: protocol supported by this release");
-  else {
+  else if (/^postgres(?:ql)?:/.test(databaseUrl)) {
+    try {
+      const url = new URL(databaseUrl);
+      if (!url.hostname || !url.username || !url.password || url.pathname.length < 2) throw new Error();
+    } catch {
+      issues.push("DATABASE_URL must be a valid PostgreSQL URL with host, database, username and password");
+    }
+    if (env.DATABASE_PROVIDER && env.DATABASE_PROVIDER !== "postgresql") issues.push("DATABASE_URL does not match this image's DATABASE_PROVIDER");
+  } else if (databaseUrl.startsWith("file:")) {
+    if (env.DATABASE_PROVIDER && env.DATABASE_PROVIDER !== "sqlite") issues.push("DATABASE_URL does not match this image's DATABASE_PROVIDER");
     const databasePath = databaseUrl.slice(5).split("?", 1)[0];
     if (!databasePath || /(?:^|\/)dev\.db$/i.test(databasePath)) issues.push("DATABASE_URL must not point at the development database in production");
     else if (!databasePath.startsWith("/")) warnings.push("DATABASE_URL uses a relative SQLite path; mount and back up that working directory explicitly");
-  }
+  } else issues.push("DATABASE_URL must use a PostgreSQL URL or SQLite file: protocol");
 
   for (const name of ["SITE_CREDENTIALS_KEY", "TWO_FACTOR_KEY", "POCKET_TOKEN_KEY"] as const) {
     const configured = value(env, name);

@@ -1,5 +1,6 @@
 import { authenticateApiRequest, unauthorized } from "@/lib/api-auth";
 import { db } from "@/lib/db";
+import { containsText } from "@/lib/database-provider";
 import { serializeEntry } from "@/lib/entry-serializer";
 import { pageNumber, positiveInteger } from "@/lib/pagination";
 
@@ -12,7 +13,7 @@ export async function GET(request: Request) {
   const page = pageNumber(params.get("page"), perPage);
   const where = {
     userId,
-    ...(term ? { OR: [{ title: { contains: term } }, { content: { contains: term } }, { url: { contains: term } }, { tags: { some: { label: { contains: term } } } }] } : {}),
+    ...(term ? { OR: [{ title: containsText(term) }, { content: containsText(term) }, { url: containsText(term) }, { tags: { some: { label: containsText(term) } } }] } : {}),
   };
   const [entries, total] = await Promise.all([
     db.entry.findMany({

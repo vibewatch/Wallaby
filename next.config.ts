@@ -38,6 +38,7 @@ export default function nextConfig(phase: string): NextConfig {
   }
 
   return {
+    output: "standalone",
     deploymentId: process.env.DEPLOYMENT_VERSION?.trim() || undefined,
     poweredByHeader: false,
     reactStrictMode: true,

@@ -3,8 +3,8 @@
 # Wallaby — multi-stage production Dockerfile
 #
 # Required runtime environment variables (set via `docker run -e` or compose):
-#   DATABASE_URL   - Prisma datasource URL. Defaults to a SQLite file volume,
-#                    e.g. file:/app/storage/wallaby.db
+#   DATABASE_URL   - Prisma datasource URL matching DATABASE_PROVIDER at build.
+#                    SQLite is the local default; production builds PostgreSQL.
 #   AUTH_SECRET    - Long random secret for Auth.js session signing (required)
 #
 # Optional (features degrade gracefully when absent) — see .env.example:
@@ -16,6 +16,7 @@
 #                             --build-arg INSTALL_CHROMIUM=true (see below).
 #   SITE_CREDENTIALS_KEY, TWO_FACTOR_*, POCKET_TOKEN_KEY - see .env.example
 #
+# PostgreSQL: docker build --build-arg DATABASE_PROVIDER=postgresql -t wallaby .
 # Browser rendering (WALLABY_BROWSER_RENDER=true) needs Chromium in the image.
 # Build with:  docker build --build-arg INSTALL_CHROMIUM=true -t wallaby .
 # =============================================================================
@@ -51,6 +52,8 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 # npm v11 otherwise installs Next.js's optional @playwright/test peer even
 # though the application depends only on the smaller runtime `playwright` API.
 RUN npm ci --omit=dev --legacy-peer-deps
+# Framework and UI dependencies come from the traced server, not the CLI tree.
+RUN node -e "const fs=require('node:fs'); for(const path of ['node_modules/next','node_modules/@next','node_modules/lucide-react','node_modules/react','node_modules/react-dom']) fs.rmSync(path,{recursive:true,force:true})"
 
 # ---- Stage 3: build the Next.js application ---------------------------------
 FROM base AS build
@@ -61,12 +64,23 @@ COPY . .
 
 ARG DEPLOYMENT_VERSION
 ENV DEPLOYMENT_VERSION=$DEPLOYMENT_VERSION
+ARG DATABASE_PROVIDER=sqlite
+ENV DATABASE_PROVIDER=$DATABASE_PROVIDER
 
 # Generate the Prisma client, then build. A fixed, unreachable placeholder
 # DATABASE_URL keeps Prisma happy during route metadata collection — never bake
 # real credentials into an image layer.
-RUN npx prisma generate \
- && DATABASE_URL="file:/tmp/build.db" npm run build
+RUN npm run db:generate \
+ && if [ "$DATABASE_PROVIDER" = "postgresql" ]; then \
+      DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build" npm run build; \
+    else DATABASE_URL="file:/tmp/build.db" npm run build; fi
+
+# Merge traced server dependencies and CLI dependencies before copying them to
+# the final image, so overlapping files are not stored in multiple image layers.
+FROM prod-deps AS runtime-files
+COPY --from=build /app/.next/standalone /app/
+COPY --from=build /app/node_modules/.prisma /app/node_modules/.prisma
+RUN find /app/node_modules -type f \( -name '*.map' -o -name '*.d.ts' -o -name '*.tsbuildinfo' \) -delete
 
 # ---- Stage 4: production runner ---------------------------------------------
 FROM base AS runner
@@ -77,22 +91,25 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 # Persisted SQLite database and media volume by default.
 ENV DATABASE_URL="file:/app/storage/wallaby.db"
+ARG DATABASE_PROVIDER=sqlite
+ENV DATABASE_PROVIDER=$DATABASE_PROVIDER
 ENV WALLABY_MEDIA_DIR="/app/storage/media"
 
 # App build output and the production-only dependency tree. Prisma's generated
 # client is produced in the build stage and copied over the clean runtime tree.
-COPY --from=prod-deps /app/node_modules ./node_modules
-COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=build /app/.next ./.next
+COPY --from=runtime-files /app/node_modules ./node_modules
+COPY --from=runtime-files /app/.next ./.next
+COPY --from=runtime-files /app/server.js ./server.js
+COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
 COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/next.config.ts ./next.config.ts
 COPY --from=build /app/tsconfig.json ./tsconfig.json
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/packages ./packages
 COPY --from=build /app/lib ./lib
 COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/docker-entrypoint.sh ./docker-entrypoint.sh
+RUN npm pkg set scripts.start="node server.js"
 
 # Optionally install the Chromium version pinned by the application's Playwright
 # dependency. This runs after node_modules is copied so the build never downloads

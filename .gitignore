@@ -13,3 +13,4 @@ storage/
 *.db-journal
 tsconfig.tsbuildinfo
 !.env.example
+prisma/postgresql/schema.prisma

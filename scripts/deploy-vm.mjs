@@ -16,6 +16,7 @@ if (!/^[a-f0-9]{40}$/.test(commit) || !/^ghcr\.io\/huangyingting\/wallaby@sha256
 const files = {
   "deploy.sh": readFileSync("scripts/deploy-vm.sh"),
   "compose.yml": readFileSync("docker-compose.vm.yml"),
+  "export-sqlite.py": readFileSync("scripts/export-sqlite.py"),
   "application.env": Buffer.from(process.env.APPLICATION_ENV || ""),
   "registry-user": Buffer.from(required("REGISTRY_USER")),
   "registry-token": Buffer.from(required("REGISTRY_TOKEN")),
@@ -25,7 +26,7 @@ const script = [
   "set -Eeuo pipefail",
   "umask 077",
   'work=$(mktemp -d /tmp/wallaby-deploy.XXXXXXXX)',
-  'trap \'rm -f -- "$work/deploy.sh" "$work/compose.yml" "$work/application.env" "$work/registry-user" "$work/registry-token" "$work/staged.env" "$work/previous.caddy" "$work/wallaby.caddy" "$work/docker/config.json"; if [[ -d "$work/docker" ]]; then rmdir -- "$work/docker"; fi; rmdir -- "$work"\' EXIT',
+  'trap \'rm -f -- "$work/deploy.sh" "$work/compose.yml" "$work/export-sqlite.py" "$work/application.env" "$work/registry-user" "$work/registry-token" "$work/staged.env" "$work/previous.caddy" "$work/wallaby.caddy" "$work/docker/config.json"; if [[ -d "$work/docker" ]]; then rmdir -- "$work/docker"; fi; rmdir -- "$work"\' EXIT',
   ...Object.entries(files).map(([name, bytes]) => `printf '%s' '${bytes.toString("base64")}' | base64 --decode > "$work/${name}"`),
   `bash "$work/deploy.sh" '${image}' '${commit}' "$work"`,
 ].join("\n");

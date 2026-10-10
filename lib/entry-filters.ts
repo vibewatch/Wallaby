@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { containsText } from "@/lib/database-provider";
 
 export const advancedFilterNames = ["minRead", "maxRead", "createdFrom", "createdTo", "publishedFrom", "publishedTo", "domain", "language", "httpStatus", "notParsed", "hasPreview", "hasAnnotations", "isShared"] as const;
 
@@ -70,7 +71,7 @@ export function entryWhere(userId: string, filters: EntryFilters, readingSpeed: 
   };
   if (filters.createdFrom || filters.createdTo) where.createdAt = { gte: filters.createdFrom ?? undefined, lte: filters.createdTo ?? undefined };
   if (filters.publishedFrom || filters.publishedTo) where.publishedAt = { gte: filters.publishedFrom ?? undefined, lte: filters.publishedTo ?? undefined };
-  if (filters.domain) where.AND = [{ domainName: { contains: filters.domain } }];
+  if (filters.domain) where.AND = [{ domainName: containsText(filters.domain) }];
   if (filters.language) where.language = filters.language;
   if (filters.httpStatus !== null) where.httpStatus = filters.httpStatus;
   if (filters.notParsed) where.isNotParsed = true;
@@ -81,10 +82,10 @@ export function entryWhere(userId: string, filters: EntryFilters, readingSpeed: 
   if (filters.query) {
     if (matchedIds) where.id = { in: matchedIds };
     else where.OR = [
-      { title: { contains: filters.query } },
-      { content: { contains: filters.query } },
-      { domainName: { contains: filters.query } },
-      { tags: { some: { label: { contains: filters.query } } } },
+      { title: containsText(filters.query) },
+      { content: containsText(filters.query) },
+      { domainName: containsText(filters.query) },
+      { tags: { some: { label: containsText(filters.query) } } },
     ];
   }
   return where;

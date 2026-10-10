@@ -45,13 +45,42 @@ if not (app / "app.json").exists():
     (app / "bootstrap.env").write_text(
         "BOOTSTRAP_ADMIN_USERNAME=admin\nBOOTSTRAP_ADMIN_PASSWORD=" + secrets.token_urlsafe(32) + "\n"
     )
-for name in ("storage", "app.env", "image.env", "compose.yml", "bootstrap.env"):
+for name in ("storage", "app.env", "image.env", "compose.yml", "bootstrap.env", "postgres.env"):
     if (app / name).is_symlink():
         raise SystemExit("Refusing a symlinked application file or storage directory")
 PY
 
 install -d -m 0750 -o 1001 -g 1001 "$app/storage" "$app/storage/media"
 install -d -m 0700 "$backup_root"
+docker network inspect webstack-apps >/dev/null
+python3 - "$app/postgres.env" <<'PY'
+from pathlib import Path
+import secrets
+import subprocess
+import sys
+
+destination = Path(sys.argv[1])
+if not destination.exists():
+    existing = subprocess.check_output(
+        ["runuser", "-u", "postgres", "--", "psql", "-X", "-At", "-d", "postgres",
+         "-c", "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname = 'app_wallaby') OR EXISTS(SELECT FROM pg_database WHERE datname = 'app_wallaby')"],
+        text=True,
+    ).strip()
+    if existing != "f":
+        raise SystemExit("Unmanaged Wallaby PostgreSQL role/database exists; credentials must be recovered before deployment")
+    password = secrets.token_hex(32)
+    sql = (
+        f"CREATE ROLE app_wallaby LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '{password}';\n"
+        "CREATE DATABASE app_wallaby OWNER app_wallaby;\n"
+        "REVOKE ALL ON DATABASE app_wallaby FROM PUBLIC;\n"
+        "GRANT CONNECT, TEMPORARY ON DATABASE app_wallaby TO app_wallaby;\n"
+    )
+    subprocess.run(
+        ["runuser", "-u", "postgres", "--", "psql", "-X", "--set=ON_ERROR_STOP=1", "-d", "postgres"],
+        input=sql, text=True, check=True, stdout=subprocess.DEVNULL,
+    )
+    destination.write_text(f"DATABASE_URL=postgresql://app_wallaby:{password}@172.30.0.1:5432/app_wallaby\n")
+PY
 python3 - "$app/app.env" "$payload/application.env" "$payload/staged.env" "$commit" <<'PY'
 import base64
 from pathlib import Path
@@ -85,7 +114,8 @@ for key in ("SITE_CREDENTIALS_KEY", "TWO_FACTOR_KEY", "POCKET_TOKEN_KEY"):
 values.update({
     "AUTH_URL": "https://wallaby.genisisiq.com",
     "AUTH_TRUST_HOST": "true",
-    "DATABASE_URL": "file:/app/storage/wallaby.db",
+    "DATABASE_URL": (current.parent / "postgres.env").read_text().strip().removeprefix("DATABASE_URL="),
+    "DATABASE_PROVIDER": "postgresql",
     "WALLABY_MEDIA_DIR": "/app/storage/media",
     "WALLABY_BROWSER_RENDER": "false",
     "DEPLOYMENT_VERSION": sys.argv[4],
@@ -97,13 +127,14 @@ export DOCKER_CONFIG="$payload/docker"
 install -d -m 0700 "$DOCKER_CONFIG"
 docker login ghcr.io --username "$(cat "$payload/registry-user")" --password-stdin < "$payload/registry-token" >/dev/null
 docker pull "$image"
-docker run --rm --entrypoint npm --env-file "$payload/staged.env" "$image" run config:validate
+docker run --rm --network webstack-apps --entrypoint npm --env-file "$payload/staged.env" "$image" run config:validate
 
 compose() {
   docker compose --project-name wallaby --project-directory "$app" --file "$app/compose.yml" --env-file "$app/image.env" "$@"
 }
 
 backup=""
+pg_backup=""
 old_image=false
 site_existed=false
 [[ ! -f "$site" ]] || { cp -- "$site" "$payload/previous.caddy"; site_existed=true; }
@@ -114,6 +145,16 @@ rollback() {
   echo "Wallaby deployment failed; recovering the previous state." >&2
   if [[ -f "$app/image.env" && -f "$app/compose.yml" ]]; then
     compose stop
+  fi
+  rm -f -- "$app/storage/postgresql-transfer.json"
+  if [[ -n "$pg_backup" ]]; then
+    if ! runuser -u postgres -- psql -X --set=ON_ERROR_STOP=1 --dbname app_wallaby \
+      -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION app_wallaby;' >/dev/null \
+      || ! runuser -u postgres -- pg_restore --exit-on-error --clean --if-exists --no-owner --no-acl \
+      --role app_wallaby --dbname app_wallaby < "$pg_backup"; then
+      echo "PostgreSQL restoration failed; containers remain stopped and backups are retained." >&2
+      exit "$status"
+    fi
   fi
   if [[ -n "$backup" && -f "$backup" ]]; then
     local failed
@@ -149,13 +190,30 @@ if [[ -f "$app/image.env" ]]; then
   echo "Created a consistent pre-upgrade database/media backup."
 fi
 
+pg_staged=$(mktemp "$backup_root/postgresql-$(date -u +%Y%m%dT%H%M%SZ).XXXXXXXX.dump")
+runuser -u postgres -- pg_dump --format=custom --no-owner --no-acl --dbname app_wallaby > "$pg_staged"
+pg_backup=$pg_staged
+echo "Created a consistent pre-upgrade PostgreSQL backup."
+if [[ -f "$app/app.env" ]] && grep -q '^DATABASE_URL=file:' "$app/app.env"; then
+  sqlite_path=$(sed -n 's/^DATABASE_URL=file:\/app\/storage\///p' "$app/app.env")
+  [[ "$sqlite_path" == "wallaby.db" ]] || { echo "Unrecognized SQLite path; refusing an unsafe cutover" >&2; false; }
+  python3 "$payload/export-sqlite.py" "$app/storage/$sqlite_path" "$app/storage/postgresql-transfer.json"
+  chown 1001:1001 "$app/storage/postgresql-transfer.json"
+fi
+docker run --rm --network webstack-apps --env-file "$payload/staged.env" \
+  --volume "$app/storage:/app/storage" "$image" npm run db:migrate
+if [[ -f "$app/storage/postgresql-transfer.json" ]]; then
+  docker run --rm --network webstack-apps --env-file "$payload/staged.env" \
+    --volume "$app/storage:/app/storage" "$image" npx tsx scripts/import-sqlite.ts /app/storage/postgresql-transfer.json
+  rm -- "$app/storage/postgresql-transfer.json"
+fi
 install -m 0600 "$payload/staged.env" "$app/app.env"
 install -m 0600 "$payload/compose.yml" "$app/compose.yml"
 printf 'APP_IMAGE=%s\n' "$image" > "$app/image.env"
 compose config --quiet
 compose up -d --no-build --wait --wait-timeout 180
 if [[ -f "$app/bootstrap.env" ]]; then
-  docker run --rm --env-file "$app/app.env" --env-file "$app/bootstrap.env" \
+  docker run --rm --network webstack-apps --env-file "$app/app.env" --env-file "$app/bootstrap.env" \
     --volume "$app/storage:/app/storage" "$image" npm run users:bootstrap
 fi
 curl --fail --silent --show-error --max-time 10 http://127.0.0.1:10002/api/health/ready

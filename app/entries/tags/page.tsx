@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { requireUser } from "@/lib/auth-user";
 import { db } from "@/lib/db";
+import { containsText } from "@/lib/database-provider";
 
 export const metadata: Metadata = { title: "Tags" };
 
@@ -16,7 +17,7 @@ export default async function TagsPage({ searchParams }: { searchParams: Promise
   const order: Order = params.order === "count" ? "count" : "name";
   const [tags, total] = await Promise.all([
     db.tag.findMany({
-      where: { userId: user.id, ...(query ? { label: { contains: query } } : {}) },
+      where: { userId: user.id, ...(query ? { label: containsText(query) } : {}) },
       select: { id: true, label: true, slug: true, _count: { select: { entries: true } } },
       orderBy: order === "count" ? [{ entries: { _count: "desc" } }, { label: "asc" }] : { label: "asc" },
       take: 5_000,

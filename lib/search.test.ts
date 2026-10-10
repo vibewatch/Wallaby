@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ftsMatchExpression, searchSnippet, tokenizeSearch } from "./search";
+import { ftsMatchExpression, postgresMatchExpression, searchSnippet, tokenizeSearch } from "./search";
 
 describe("tokenizeSearch", () => {
   it("splits bare words and lowercases them", () => {
@@ -52,6 +52,14 @@ describe("ftsMatchExpression", () => {
 
   it("has nothing to match when no token survived", () => {
     expect(ftsMatchExpression(tokenizeSearch("!!!"))).toBeNull();
+  });
+});
+
+describe("postgresMatchExpression", () => {
+  it("preserves prefixes, exact phrase positions, and AND semantics", () => {
+    expect(postgresMatchExpression(tokenizeSearch('"portable reading" archiv'))).toBe("('portable' <-> 'reading') & 'archiv':*");
+    expect(postgresMatchExpression(tokenizeSearch("!!!"))).toBeNull();
+    expect(postgresMatchExpression(tokenizeSearch("x'); DROP TABLE users; --"))).toBe("'x':* & 'drop':* & 'table':* & 'users':*");
   });
 });
 

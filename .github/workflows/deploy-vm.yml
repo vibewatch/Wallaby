@@ -63,7 +63,9 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ghcr.io/huangyingting/wallaby:${{ steps.source.outputs.commit }}
-          build-args: DEPLOYMENT_VERSION=${{ steps.source.outputs.commit }}
+          build-args: |
+            DEPLOYMENT_VERSION=${{ steps.source.outputs.commit }}
+            DATABASE_PROVIDER=postgresql
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

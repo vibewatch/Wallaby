@@ -8,6 +8,6 @@ echo "Wallaby: validating production configuration..."
 npm run config:validate
 
 echo "Wallaby: applying database migrations..."
-npx prisma migrate deploy
+npm run db:migrate
 
 exec "$@"

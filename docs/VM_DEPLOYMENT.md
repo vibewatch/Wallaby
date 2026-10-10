@@ -4,18 +4,18 @@ Wallaby uses the same Azure VM, GHCR registry, GitHub OIDC authentication, and
 Caddy HTTPS entry point as EduLoop. It runs at **https://wallaby.genisisiq.com**,
 with a loopback-only upstream on port **10002**.
 
-Unlike EduLoop, this release supports SQLite, not PostgreSQL, and needs a
-continuous import worker. Webstack's `webstack-deploy.yml@v1.0.0` creates a
-PostgreSQL environment and a single container, so copying EduLoop's reusable
-workflow call would lose persistence and fail Wallaby's configuration checks.
-Wallaby instead owns a small app-specific rollout using the same Azure Run
-Command transport. It does not change EduLoop, PostgreSQL, or the global Caddy
-configuration.
+Like EduLoop, production uses the shared host's PostgreSQL 16 server, with a
+dedicated `app_wallaby` database and restricted role. Wallaby also needs a
+continuous import worker and persistent article media, so it owns an
+app-specific rollout using the same Azure Run Command transport. It does not
+change EduLoop's database or the global Caddy configuration. SQLite remains
+available for local development, but production images are built for PostgreSQL.
 
 ## Runtime and storage
 
 `docker-compose.vm.yml` starts exactly one web container and one worker, using
-the same image digest and `/data/apps/wallaby/storage` bind mount. Each container
+the same image digest, PostgreSQL database and `/data/apps/wallaby/storage` media
+bind mount, connected to the existing `webstack-apps` network. Each container
 runs as UID/GID 1001 with a 1 GiB memory ceiling, dropped capabilities, bounded
 logs, and automatic restart. Only the web service publishes a port, and only on
 `127.0.0.1`.
@@ -24,26 +24,46 @@ logs, and automatic restart. Only the web service publishes a port, and only on
 | --- | --- |
 | Azure VM | Existing Webstack host with Docker Compose 2.30+ and Caddy |
 | DNS | `wallaby.genisisiq.com` must resolve to that VM |
-| Local persistence | Mounted `/data`; SQLite and media share `storage/` |
-| Blob Storage | **Not required for runtime**; blobs cannot replace SQLite's local filesystem |
-| PostgreSQL / Redis | Not required by this release |
+| Local persistence | Mounted `/data`; media uses `storage/`, PostgreSQL uses the host's persistent database storage |
+| Blob Storage | **Not required for runtime** |
+| PostgreSQL | Existing PostgreSQL 16 server, dedicated Wallaby database/role |
+| Redis | Not required |
 | SMTP | Optional; enables email two-factor authentication and self-service password reset |
 | Chromium | Disabled in this profile; ordinary HTTP extraction works without it |
 
 The application does not need a new Azure Storage account to serve articles or
 images. The VM's existing off-host backup storage can also hold Wallaby backups,
-but its current `webstack-backup` job only dumps PostgreSQL. **It does not protect
-Wallaby's SQLite database, media, or encryption keys.**
+and its current `webstack-backup` job's `pg_dumpall` covers the new PostgreSQL
+database. **It still does not protect Wallaby's media or encryption keys.**
+Verify off-host backup delivery and restoration before treating it as disaster
+recovery.
 
 Rollouts take a consistent, root-only pre-upgrade archive under
-`/data/backups/wallaby/` after stopping only Wallaby's two containers. A failed
-upgrade restores the prior database, media, environment, Compose configuration,
-and image. Failed-upgrade storage is retained for diagnosis rather than deleted.
+`/data/backups/wallaby/` after stopping only Wallaby's two containers, plus a
+custom-format PostgreSQL dump. A failed upgrade restores only Wallaby's database,
+media, environment, Compose configuration, and image. Failed-upgrade storage is
+retained for diagnosis rather than deleted.
 These local archives are not disaster recovery: VM/disk loss can destroy both
 the live data and local archives. Before relying on the service for irreplaceable
-data, schedule consistent database/media/key backups to off-VM storage and test
+data, schedule consistent media/key backups alongside the PostgreSQL backup and test
 restoration. Follow [the production backup procedure](PRODUCTION.md#storage-and-backups).
 Old local archives are not automatically deleted.
+
+## Existing SQLite cutover
+
+The first PostgreSQL rollout snapshots the stopped SQLite database and media,
+exports every application table plus article/tag relationships, applies native
+PostgreSQL migrations, and transfers rows in one transaction. IDs, passwords,
+encrypted credentials, tokens, dates, annotations, reading state and import
+history are retained. Search metadata is rebuilt rather than copied. The
+destination must be empty; transfer never merges or overwrites an existing
+database. A failed rollout restores the pre-upgrade PostgreSQL state and old
+SQLite image/environment, with the original file retained in the archive.
+
+The dedicated role's connection URL is generated in root-only
+`/data/apps/wallaby/postgres.env` and used in `app.env`. These files must be
+backed up with application keys. An existing database without its managed
+credential file blocks deployment instead of resetting its password.
 
 ## One-time GitHub and Azure configuration
 
@@ -120,11 +140,11 @@ gh workflow run deploy-vm.yml --ref main
 ```
 
 Both paths require a successful release-gate run for the exact source commit.
-The workflow builds a linux/amd64 image, tags it with that commit, then deploys
+The workflow builds a linux/amd64 PostgreSQL image, tags it with that commit, then deploys
 the immutable digest. The commit is embedded as `DEPLOYMENT_VERSION` at build
 time and supplied at runtime. A rollout lock prevents overlapping Wallaby
-deployments; the single-instance SQLite profile intentionally has brief upgrade
-downtime instead of overlapping writers from different releases.
+deployments; upgrades intentionally have brief downtime rather than overlapping
+writers or allowing writes during database/media snapshots.
 
 After configuration validation and image pull, the VM snapshots existing data,
 starts the web and worker, bootstraps an administrator if needed, and validates

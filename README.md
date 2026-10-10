@@ -32,8 +32,9 @@ Library ranked searches return up to 500 matching entries after applying the sel
 ## Local setup
 
 For GitHub Actions deployment alongside EduLoop on the shared Azure VM, see
-[Webstack VM deployment](docs/VM_DEPLOYMENT.md). It uses persistent local SQLite
-and media storage; a Blob account is not required for runtime.
+[Webstack VM deployment](docs/VM_DEPLOYMENT.md). Production uses an isolated
+PostgreSQL database and persistent media storage; a Blob account is not required
+for runtime.
 
 Requirements: Node.js 22.12 or newer and npm 10 or newer. The container and CI use Node.js 24.
 
@@ -49,7 +50,7 @@ Open `http://localhost:3000` and use the seeded local account:
 - username: `demo` (administrator on a fresh seed)
 - password: `wallaby-demo`
 
-Replace `AUTH_SECRET` and `SITE_CREDENTIALS_KEY` before using Wallaby outside local development. The latter must decode to exactly 32 random bytes and protects publication usernames/passwords with AES-256-GCM. Authenticator-app 2FA encrypts TOTP secrets with `TWO_FACTOR_KEY` when provided, or a domain-separated key derived from a strong `AUTH_SECRET`; email-code 2FA and password reset additionally require the `TWO_FACTOR_SMTP_*` and `TWO_FACTOR_EMAIL_FROM` settings documented in `.env.example`; reset links are built only from `AUTH_URL`, never from request headers. SQLite is the zero-configuration default; the Prisma schema is deliberately portable so a PostgreSQL deployment can become a supported profile.
+Replace `AUTH_SECRET` and `SITE_CREDENTIALS_KEY` before using Wallaby outside local development. The latter must decode to exactly 32 random bytes and protects publication usernames/passwords with AES-256-GCM. Authenticator-app 2FA encrypts TOTP secrets with `TWO_FACTOR_KEY` when provided, or a domain-separated key derived from a strong `AUTH_SECRET`; email-code 2FA and password reset additionally require the `TWO_FACTOR_SMTP_*` and `TWO_FACTOR_EMAIL_FROM` settings documented in `.env.example`; reset links are built only from `AUTH_URL`, never from request headers. SQLite remains the zero-configuration local default. Production PostgreSQL builds use `--build-arg DATABASE_PROVIDER=postgresql`; database commands select the provider from `DATABASE_PROVIDER` or `DATABASE_URL`. See [Production operations](docs/PRODUCTION.md#database-providers).
 
 ## Verification
 
@@ -66,7 +67,7 @@ Apply every saved tagging rule to an existing user's library from the command li
 npm run tag:all -- demo
 ```
 
-Imports are stored before article processing begins. In the supported SQLite production profile, run one worker process beside the web application:
+Imports are stored before article processing begins. Run one worker process beside the web application with either database provider:
 
 ```bash
 npm run import:worker

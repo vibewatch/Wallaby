@@ -15,6 +15,8 @@ x-runtime: &runtime
     - no-new-privileges:true
   cap_drop:
     - ALL
+  networks:
+    - apps
   logging:
     driver: json-file
     options:
@@ -34,3 +36,8 @@ services:
         condition: service_healthy
     healthcheck:
       disable: true
+
+networks:
+  apps:
+    external: true
+    name: webstack-apps

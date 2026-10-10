@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
+import { containsText, databaseProvider } from "@/lib/database-provider";
 import { entryWhere, type EntryFilters } from "@/lib/entry-filters";
 import { stripHtml } from "@/lib/text";
 
@@ -61,9 +62,8 @@ export function ftsMatchExpression(tokens: SearchTokens): string | null {
 let capability: Promise<SearchEngine> | null = null;
 
 /**
- * Probes once for a usable index instead of inspecting the connection string.
- * A PostgreSQL deployment simply has no `EntrySearch` table, so the probe fails
- * and every caller degrades to portable matching without any provider check.
+ * Probes once for the provider's search index; only a missing index falls back
+ * to a scan. Connection and permission failures remain visible.
  */
 export function searchEngine(): Promise<SearchEngine> {
   capability ??= probeSearchEngine().catch((error) => {
@@ -80,12 +80,25 @@ export function resetSearchEngine(): void {
 
 async function probeSearchEngine(): Promise<SearchEngine> {
   try {
-    await db.$queryRaw`SELECT "entryId" FROM "EntrySearch" WHERE "EntrySearch" MATCH 'wallaby' LIMIT 1`;
+    if (postgresql()) await db.$queryRaw`SELECT "entryId" FROM "EntrySearch" WHERE "document" @@ to_tsquery('simple', unaccent('wallaby')) LIMIT 1`;
+    else await db.$queryRaw`SELECT "entryId" FROM "EntrySearch" WHERE "EntrySearch" MATCH 'wallaby' LIMIT 1`;
     return "index";
   } catch (error) {
     if (!missingSearchIndex(error)) throw error;
     return "scan";
   }
+}
+
+function postgresql(): boolean {
+  return databaseProvider() === "postgresql";
+}
+
+export function postgresMatchExpression(tokens: SearchTokens): string | null {
+  const parts = [
+    ...tokens.phrases.map((phrase) => `(${phrase.split(" ").map((word) => `'${word}'`).join(" <-> ")})`),
+    ...tokens.terms.map((word) => `'${word}':*`),
+  ];
+  return parts.length ? parts.join(" & ") : null;
 }
 
 function missingSearchIndex(error: unknown): boolean {
@@ -101,13 +114,18 @@ function missingSearchIndex(error: unknown): boolean {
  */
 export async function rankedEntryIds(userId: string, term: string, where: Prisma.EntryWhereInput = {}, limit = SEARCH_CANDIDATE_LIMIT): Promise<string[] | null> {
   const tokens = tokenizeSearch(term);
-  const match = ftsMatchExpression(tokens);
+  const match = postgresql() ? postgresMatchExpression(tokens) : ftsMatchExpression(tokens);
   if (!match || (await searchEngine()) !== "index") return null;
 
   const ranked: string[] = [];
   try {
     for (let offset = 0; ranked.length < limit; offset += SEARCH_CANDIDATE_LIMIT) {
-      const rows = await db.$queryRaw<{ entryId: string }[]>`
+      const rows = postgresql() ? await db.$queryRaw<{ entryId: string }[]>`
+        SELECT "entryId" FROM "EntrySearch", to_tsquery('simple', unaccent(${match})) query
+        WHERE "document" @@ query AND "userId" = ${userId}
+        ORDER BY ts_rank("document", query) DESC, "entryId"
+        LIMIT ${SEARCH_CANDIDATE_LIMIT} OFFSET ${offset}
+      ` : await db.$queryRaw<{ entryId: string }[]>`
         SELECT "entryId" FROM "EntrySearch"
         WHERE "EntrySearch" MATCH ${match} AND "userId" = ${userId}
         ORDER BY bm25("EntrySearch", 0.0, 0.0, 10.0, 1.0, 4.0), "entryId"
@@ -131,7 +149,7 @@ export async function rankedEntryIds(userId: string, term: string, where: Prisma
   // Searching for a tag the way you search for prose already worked before the
   // index existed, and losing it here would be a regression.
   const tagged = await db.entry.findMany({
-    where: { AND: [where, { userId, tags: { some: { label: { contains: term } } } }] },
+    where: { AND: [where, { userId, tags: { some: { label: containsText(term) } } }] },
     select: { id: true },
     take: limit,
   });

@@ -1,6 +1,6 @@
 # Production operations
 
-Wallaby's supported production profile is one Next.js web process, one durable import worker, SQLite on a persistent local volume, and a TLS-terminating reverse proxy. The web and worker must share the database and media volume. Do not place multiple web replicas over the SQLite file; a future PostgreSQL profile is required before horizontal web scaling is supported.
+Wallaby's production deployment uses one Next.js web process, one durable import worker, PostgreSQL, persistent local media, and a TLS-terminating reverse proxy. SQLite remains supported for local development and single-instance deployments. Both processes must use the same database and media directory; PostgreSQL support does not by itself provide shared media or justify adding web replicas.
 
 For the EduLoop-style Azure VM and GitHub Actions setup, see [Webstack deployment](VM_DEPLOYMENT.md), including the SQLite-specific rollout and off-VM backup requirements.
 
@@ -14,9 +14,34 @@ npx playwright install --with-deps chromium
 DATABASE_URL=file:/tmp/wallaby-release-check.db npm run release
 ```
 
-The release gate requires a running Docker Engine. It runs lint, TypeScript, the complete unit/integration suite, the complete 2,037-site extraction corpus, a production build, isolated desktop/mobile Playwright workflows, the production dependency audit, Prisma schema validation, and a production-container acceptance test. The container test builds a production-dependency-only image, migrates a fresh volume, proves liveness/readiness and security headers as the non-root runtime user, checks Docker health and graceful shutdown, starts the durable worker once, and then removes its uniquely named test resources. Playwright likewise creates a migrated database and media directory under `.tmp/e2e` and removes both after the run; neither gate uses the operator's normal database. The placeholder URL above satisfies schema validation, while browser tests supply their own database and test-only encryption keys without relying on a developer's `.env`.
+The release gate requires a running Docker Engine. It runs lint, TypeScript, unit/integration tests, the 2,037-site extraction corpus, a production build, desktop/mobile Playwright workflows, the production audit, Prisma validation, and container acceptance for both SQLite and PostgreSQL. PostgreSQL acceptance uses an isolated PostgreSQL 16 container and restricted application role, tests SQLite transfer fidelity and refusal to overwrite data, indexed search and ownership, authentication, HTTP readiness, and worker execution. Both image profiles must stay below 900 MB uncompressed. The SQLite test checks security headers, non-root execution, administrator bootstrap and shutdown. Test resources are removed after each run. Playwright uses `.tmp/e2e`, its own database and test-only encryption keys; none of these tests uses the operator's database. The placeholder URL above satisfies schema validation without a developer `.env`.
 
 The scoped `@prisma/config` override selects `deepmerge-ts` 8 to address GHSA-ggr8-5vv4-36mx without downgrading Prisma or mismatching its CLI and generated client. The application uses plain-record Prisma configuration, not the Map-merging behavior changed by that release. Reassess the override when upgrading Prisma.
+
+## Database providers
+
+`prisma/schema.prisma` is the shared domain model and the SQLite development
+schema. `scripts/database.mjs` derives the PostgreSQL schema from that model;
+the two providers have independent, versioned migration histories. Do not apply
+SQLite migrations to PostgreSQL or switch a running image's provider.
+
+```bash
+DATABASE_PROVIDER=postgresql npm run db:generate
+DATABASE_PROVIDER=postgresql DATABASE_URL="$POSTGRES_URL" npm run db:migrate
+docker build --build-arg DATABASE_PROVIDER=postgresql -t wallaby-postgresql .
+```
+
+For SQLite development, regenerate with `DATABASE_PROVIDER=sqlite npm run
+db:generate`. After changing the model, update migrations for **both** providers.
+PostgreSQL uses a GIN full-text index with title-weighted ranking, prefix and
+phrase matching, `unaccent` normalization, and transactionally updated search
+documents; SQLite retains FTS5. Both preserve case-insensitive substring and tag
+search. Missing search indexes fall back to scanning, but database errors surface.
+
+The runtime uses Next.js standalone output. Build caches, SWC build-time
+binaries, source maps and type declarations are excluded; Prisma migrations,
+the import worker, operator commands, extraction definitions and export fonts
+remain available. Chromium is still an opt-in image build.
 
 ## Required configuration
 
@@ -37,7 +62,11 @@ Expose Wallaby only through an HTTPS reverse proxy. Preserve the original `Host`
 
 ## Storage and backups
 
-Mount `/app/storage` on durable storage. It contains the SQLite database and, when enabled, downloaded article media. Back up both as one consistency unit. The safest simple procedure is:
+Mount `/app/storage` on durable storage for downloaded article media. Back up the
+database, media and encryption keys as one consistency unit. Stop web and worker
+writers first; use `pg_dump --format=custom` for PostgreSQL and `pg_restore` to
+restore into an isolated database. For SQLite, copy the database and its
+`-wal`/`-shm` companions along with media:
 
 1. Stop the web and worker containers.
 2. Copy the SQLite database, its `-wal`/`-shm` companions if present, and the media directory.
@@ -49,10 +78,10 @@ Before upgrades, take a backup. The container entrypoint applies forward migrati
 ## Health and monitoring
 
 - `GET /api/health/live` proves the HTTP process is alive without touching persistence.
-- `GET /api/health/ready` proves SQLite is queryable and, when local image capture is enabled, that the media directory is readable and writable.
+- `GET /api/health/ready` proves the configured database is queryable and, when local image capture is enabled, that the media directory is readable and writable.
 - Both endpoints are public, return no secrets, and are explicitly non-cacheable.
 
-The Docker image includes a readiness-based health check. Unexpected server failures are written as single-line JSON with event name, route template, error type, digest, and timestamp; request headers, query strings, feed tokens, and article contents are deliberately excluded. Ship stdout/stderr to the deployment's log collector and alert on readiness failures, container restarts, `request.failed`, and sustained `auth.credentials_rejected` events. `request.aborted` is informational: the browser stopped reading a page it had requested, usually because the reader navigated on.
+The Docker image includes a readiness-based health check for either database provider. Unexpected server failures are written as single-line JSON with event name, route template, error type, digest, and timestamp; request headers, query strings, feed tokens, and article contents are deliberately excluded. Ship stdout/stderr to the deployment's log collector and alert on readiness failures, container restarts, `request.failed`, and sustained `auth.credentials_rejected` events. `request.aborted` is informational: the browser stopped reading a page it had requested, usually because the reader navigated on.
 
 ## Worker and external boundaries
 

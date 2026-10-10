@@ -8,6 +8,13 @@ const valid = {
 };
 
 describe("production configuration", () => {
+  it("accepts PostgreSQL and rejects malformed URLs and mismatched provider builds", () => {
+    const postgres = { ...valid, DATABASE_URL: "postgresql://wallaby:test-password@postgres:5432/wallaby", DATABASE_PROVIDER: "postgresql" };
+    expect(validateProductionEnvironment(postgres)).toEqual({ warnings: [] });
+    expect(() => validateProductionEnvironment({ ...postgres, DATABASE_URL: "postgresql://postgres/" })).toThrow(/valid PostgreSQL/);
+    expect(() => validateProductionEnvironment({ ...postgres, DATABASE_PROVIDER: "sqlite" })).toThrow(/does not match/);
+    expect(() => validateProductionEnvironment({ ...valid, DATABASE_PROVIDER: "postgresql" })).toThrow(/does not match/);
+  });
   it("accepts a minimal durable production configuration", () => {
     expect(validateProductionEnvironment(valid)).toEqual({ warnings: [] });
   });

@@ -100,6 +100,10 @@ async function main(): Promise<void> {
   let started = false;
   try {
     await dockerStreaming(["build", "--build-arg", "INSTALL_CHROMIUM=false", "--tag", image, "."]);
+    const imageBytes = Number(await docker(["image", "inspect", "--format", "{{.Size}}", image]));
+    if (imageBytes > 900_000_000) throw new Error(`Production image exceeds the 900 MB uncompressed budget: ${imageBytes}`);
+    await docker(["run", "--rm", "--entrypoint", "node", image, "-e",
+      "const fs=require('node:fs'); for(const path of ['.next/cache','node_modules/@next/swc-linux-x64-gnu']) if(fs.existsSync(path)) throw new Error('Build-only artifact in runtime: '+path);"]);
     let rejected = false;
     try {
       await docker([
@@ -199,6 +203,7 @@ async function main(): Promise<void> {
       worker: "ready",
       administrator: "created-without-demo-account",
       shutdownMs,
+      imageBytes,
     }));
   } catch (error) {
     if (started) {
