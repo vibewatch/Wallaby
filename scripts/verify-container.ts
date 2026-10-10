@@ -7,10 +7,11 @@ import { promisify } from "node:util";
 const execute = promisify(execFile);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const suffix = `${process.pid}-${Date.now().toString(36)}`;
-const image = `wallaby-production-check:${suffix}`;
+const image = process.env.WALLABY_TEST_IMAGE || `wallaby-production-check:${suffix}`;
 const container = `wallaby-production-check-${suffix}`;
 const rejectionContainer = `wallaby-production-rejection-check-${suffix}`;
 const workerContainer = `wallaby-production-worker-check-${suffix}`;
+const continuousWorkerContainer = `wallaby-production-continuous-worker-check-${suffix}`;
 const volume = `wallaby-production-check-data-${suffix}`;
 const testSecret = "V9yQ2mN8rL4cX6bH1jP5sD3aG0tK7eU9iO2pR8wF6zC4vB1n";
 const commonRuntimeEnvironment = [
@@ -99,11 +100,11 @@ function requireHeader(headers: Headers, name: string, expected: string): void {
 async function main(): Promise<void> {
   let started = false;
   try {
-    await dockerStreaming(["build", "--build-arg", "INSTALL_CHROMIUM=false", "--tag", image, "."]);
+    if (!process.env.WALLABY_TEST_IMAGE) await dockerStreaming(["build", "--build-arg", "INSTALL_CHROMIUM=false", "--tag", image, "."]);
     const imageBytes = Number(await docker(["image", "inspect", "--format", "{{.Size}}", image]));
-    if (imageBytes > 900_000_000) throw new Error(`Production image exceeds the 900 MB uncompressed budget: ${imageBytes}`);
+    if (imageBytes > 650_000_000) throw new Error(`Production image exceeds the 650 MB Docker-reported size budget: ${imageBytes}`);
     await docker(["run", "--rm", "--entrypoint", "node", image, "-e",
-      "const fs=require('node:fs'); for(const path of ['.next/cache','node_modules/@next/swc-linux-x64-gnu']) if(fs.existsSync(path)) throw new Error('Build-only artifact in runtime: '+path);"]);
+      "const fs=require('node:fs'); for(const path of ['.next/cache','node_modules/@next/swc-linux-x64-gnu','node_modules/@next/swc-linux-x64-musl','node_modules/tsx','node_modules/@esbuild','/usr/local/include/node']) if(fs.existsSync(path)) throw new Error('Build-only artifact in runtime: '+path);"]);
     let rejected = false;
     try {
       await docker([
@@ -171,6 +172,10 @@ async function main(): Promise<void> {
       "const { PrismaClient } = require('@prisma/client'); const { compare } = require('bcryptjs'); const db = new PrismaClient(); (async () => { const users = await db.user.findMany(); if (users.length !== 1 || users[0].username !== 'admin' || users[0].role !== 'ADMIN' || !await compare('Container-bootstrap-password-1', users[0].passwordHash)) throw new Error('Bootstrap created an unexpected account or changed its password'); console.log('bootstrap-ok'); })().finally(() => db.$disconnect()).catch(() => { process.exitCode = 1; });",
     ]);
     if (bootstrapState !== "bootstrap-ok") throw new Error("administrator credentials did not survive repeated bootstrap");
+    const runtimeProof = await docker(["exec", container, "node", "runtime/scripts/runtime-smoke.mjs"]);
+    if (!runtimeProof.includes("native-roundtrip")) throw new Error("Native image/PDF runtime proof failed");
+    console.log(runtimeProof);
+    const runtimeResult: unknown = JSON.parse(runtimeProof.slice(runtimeProof.lastIndexOf("\n") + 1));
     await docker([
       "exec", container, "node", "-e",
       "for (const dependency of ['@playwright/test','eslint','vitest']) { try { require.resolve(dependency); throw new Error(`development dependency present: ${dependency}`); } catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; } }",
@@ -191,6 +196,20 @@ async function main(): Promise<void> {
     if (!workerOutput.includes("Processed 0 import jobs.")) {
       throw new Error(`worker smoke check returned unexpected output: ${workerOutput}`);
     }
+    await docker([
+      "run", "--detach", "--init", "--name", continuousWorkerContainer, "--no-healthcheck",
+      "--volume", `${volume}:/app/storage`, ...runtimeEnvironment,
+      image, "npm", "run", "import:worker",
+    ]);
+    let pruned = false;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if ((await dockerLogs(continuousWorkerContainer)).includes("maintenance.pruned")) { pruned = true; break; }
+      await delay(500);
+    }
+    if (!pruned) throw new Error("Continuous worker did not execute its maintenance cycle");
+    await docker(["stop", "--timeout", "10", continuousWorkerContainer]);
+    const workerExit = Number(await docker(["inspect", "--format", "{{.State.ExitCode}}", continuousWorkerContainer]));
+    if (workerExit === 137) throw new Error("Continuous worker required SIGKILL instead of graceful shutdown");
 
     console.log(JSON.stringify({
       image: "built",
@@ -201,7 +220,9 @@ async function main(): Promise<void> {
       health: "healthy",
       uid: Number(uid),
       worker: "ready",
+      continuousWorker: "pruned-and-stopped",
       administrator: "created-without-demo-account",
+      runtime: runtimeResult,
       shutdownMs,
       imageBytes,
     }));
@@ -216,13 +237,15 @@ async function main(): Promise<void> {
     }
     throw error;
   } finally {
-    for (const args of [
+    const cleanup = [
+      ["rm", "--force", continuousWorkerContainer],
       ["rm", "--force", workerContainer],
       ["rm", "--force", rejectionContainer],
       ["rm", "--force", container],
       ["volume", "rm", volume],
-      ["image", "rm", image],
-    ]) {
+    ];
+    if (!process.env.WALLABY_TEST_IMAGE) cleanup.push(["image", "rm", image]);
+    for (const args of cleanup) {
       try { await docker(args); }
       catch { /* The resource may not have been created yet. */ }
     }

@@ -46,6 +46,7 @@
     "db:generate": "node scripts/database.mjs generate",
     "db:validate": "node scripts/database.mjs validate",
     "db:migrate": "node scripts/database.mjs migrate deploy",
+    "db:import-sqlite": "tsx scripts/import-sqlite.ts",
     "db:push": "node scripts/database.mjs db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:setup": "npm run db:generate && npm run db:migrate && npm run db:seed"
@@ -82,6 +83,7 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.1",
+    "esbuild": "0.25.12",
     "eslint-config-next": "16.3.8",
     "typescript": "5.9.3",
     "vitest": "4.1.10"

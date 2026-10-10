@@ -24,10 +24,19 @@
 # Prisma needs OpenSSL both while generating its native engine and while
 # applying migrations at startup. CA certificates are also required for the
 # application's outbound HTTPS fetches.
-FROM node:24-bookworm-slim AS base
+ARG INSTALL_CHROMIUM=false
+ARG ALPINE_VERSION=3.24
+FROM node:24-alpine${ALPINE_VERSION} AS base-false
+RUN apk add --no-cache ca-certificates openssl
+
+# Playwright requires glibc; the existing browser flag selects Debian throughout
+# the build so native Prisma, sharp and canvas binaries match the final runtime.
+FROM node:24-bookworm-slim AS base-true
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates openssl \
  && rm -rf /var/lib/apt/lists/*
+
+FROM base-${INSTALL_CHROMIUM} AS base
 
 # ---- Stage 1: install ALL dependencies (needed for prisma generate + build) -
 FROM base AS deps
@@ -38,24 +47,10 @@ COPY package*.json ./
 COPY packages/extractor/package.json packages/extractor/
 COPY packages/extractor-site-config/package.json packages/extractor-site-config/
 
-RUN npm ci
+RUN npm ci \
+ && node -e "require('sharp'); require('@napi-rs/canvas').createCanvas(1, 1)"
 
-# ---- Stage 2: install production-only runtime dependencies ------------------
-FROM base AS prod-deps
-WORKDIR /app
-
-COPY package*.json ./
-COPY packages/extractor/package.json packages/extractor/
-COPY packages/extractor-site-config/package.json packages/extractor-site-config/
-
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-# npm v11 otherwise installs Next.js's optional @playwright/test peer even
-# though the application depends only on the smaller runtime `playwright` API.
-RUN npm ci --omit=dev --legacy-peer-deps
-# Framework and UI dependencies come from the traced server, not the CLI tree.
-RUN node -e "const fs=require('node:fs'); for(const path of ['node_modules/next','node_modules/@next','node_modules/lucide-react','node_modules/react','node_modules/react-dom']) fs.rmSync(path,{recursive:true,force:true})"
-
-# ---- Stage 3: build the Next.js application ---------------------------------
+# ---- Stage 2: build the Next.js application and operator entrypoints --------
 FROM base AS build
 WORKDIR /app
 
@@ -74,16 +69,25 @@ RUN npm run db:generate \
  && if [ "$DATABASE_PROVIDER" = "postgresql" ]; then \
       DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build" npm run build; \
     else DATABASE_URL="file:/tmp/build.db" npm run build; fi
+RUN node scripts/build-runtime.mjs
 
-# Merge traced server dependencies and CLI dependencies before copying them to
-# the final image, so overlapping files are not stored in multiple image layers.
-FROM prod-deps AS runtime-files
-COPY --from=build /app/.next/standalone /app/
-COPY --from=build /app/node_modules/.prisma /app/node_modules/.prisma
+# Assemble the union of server/operator traces before the final image copy.
+FROM base AS runtime-files
+COPY --from=build /app/.next/runtime /app/
 RUN find /app/node_modules -type f \( -name '*.map' -o -name '*.d.ts' -o -name '*.tsbuildinfo' \) -delete
 
+# Copy only Node and npm into a matching Alpine runtime: no Yarn or C headers.
+FROM alpine:${ALPINE_VERSION} AS runtime-false
+RUN apk add --no-cache ca-certificates openssl libstdc++
+COPY --from=base-false /usr/local/bin/node /usr/local/bin/node
+COPY --from=base-false /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+FROM base-true AS runtime-true
+
 # ---- Stage 4: production runner ---------------------------------------------
-FROM base AS runner
+FROM runtime-${INSTALL_CHROMIUM} AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -95,21 +99,11 @@ ARG DATABASE_PROVIDER=sqlite
 ENV DATABASE_PROVIDER=$DATABASE_PROVIDER
 ENV WALLABY_MEDIA_DIR="/app/storage/media"
 
-# App build output and the production-only dependency tree. Prisma's generated
-# client is produced in the build stage and copied over the clean runtime tree.
-COPY --from=runtime-files /app/node_modules ./node_modules
-COPY --from=runtime-files /app/.next ./.next
-COPY --from=runtime-files /app/server.js ./server.js
+# App output, compiled operators, platform engines and traced dependencies.
+COPY --from=runtime-files /app/ ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/tsconfig.json ./tsconfig.json
-COPY --from=build /app/prisma ./prisma
-COPY --from=build /app/packages ./packages
-COPY --from=build /app/lib ./lib
-COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/docker-entrypoint.sh ./docker-entrypoint.sh
-RUN npm pkg set scripts.start="node server.js"
 
 # Optionally install the Chromium version pinned by the application's Playwright
 # dependency. This runs after node_modules is copied so the build never downloads
@@ -117,12 +111,14 @@ RUN npm pkg set scripts.start="node server.js"
 ARG INSTALL_CHROMIUM=false
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN if [ "$INSTALL_CHROMIUM" = "true" ]; then \
-      npx playwright install --with-deps chromium; \
+      node node_modules/playwright-core/cli.js install --with-deps --only-shell chromium; \
     fi
 
 # Non-root user; the storage volume must be writable for SQLite + media.
-RUN groupadd --system --gid 1001 nodejs \
- && useradd  --system --uid 1001 --gid nodejs wallaby \
+RUN if command -v apk >/dev/null; then \
+      addgroup -S -g 1001 nodejs && adduser -S -u 1001 -G nodejs wallaby; \
+    else groupadd --system --gid 1001 nodejs \
+      && useradd --system --uid 1001 --gid nodejs wallaby; fi \
  && mkdir -p /app/storage/media \
  && chown -R wallaby:nodejs /app/storage \
  && chmod +x ./docker-entrypoint.sh

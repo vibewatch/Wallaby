@@ -204,7 +204,7 @@ docker run --rm --network webstack-apps --env-file "$payload/staged.env" \
   --volume "$app/storage:/app/storage" "$image" npm run db:migrate
 if [[ -f "$app/storage/postgresql-transfer.json" ]]; then
   docker run --rm --network webstack-apps --env-file "$payload/staged.env" \
-    --volume "$app/storage:/app/storage" "$image" npx tsx scripts/import-sqlite.ts /app/storage/postgresql-transfer.json
+    --volume "$app/storage:/app/storage" "$image" npm run db:import-sqlite -- /app/storage/postgresql-transfer.json
   rm -- "$app/storage/postgresql-transfer.json"
 fi
 install -m 0600 "$payload/staged.env" "$app/app.env"

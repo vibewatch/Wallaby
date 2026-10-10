@@ -8,10 +8,12 @@ import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import { PrismaClient } from "@prisma/client";
 import { hash } from "bcryptjs";
+import { unzipSync } from "fflate";
+import { PDFDocument } from "pdf-lib";
 
 const execute = promisify(execFile);
 const suffix = `${process.pid}-${Date.now()}`;
-const image = `wallaby-postgresql-check:${suffix}`;
+const image = process.env.WALLABY_TEST_IMAGE || `wallaby-postgresql-check:${suffix}`;
 const network = `wallaby-postgresql-${suffix}`;
 const postgres = `wallaby-postgresql-db-${suffix}`;
 const web = `wallaby-postgresql-web-${suffix}`;
@@ -36,18 +38,20 @@ async function main() {
   const directory = await mkdtemp(join(tmpdir(), "wallaby-postgresql-transfer-"));
   let sqlite: PrismaClient | undefined;
   try {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn("docker", ["build", "--build-arg", "DATABASE_PROVIDER=postgresql", "--tag", image, "."], { stdio: "inherit" });
-      child.once("error", reject);
-      child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`PostgreSQL image build exited ${code}`)));
-    });
+    if (!process.env.WALLABY_TEST_IMAGE) {
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn("docker", ["build", "--build-arg", "DATABASE_PROVIDER=postgresql", "--tag", image, "."], { stdio: "inherit" });
+        child.once("error", reject);
+        child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`PostgreSQL image build exited ${code}`)));
+      });
+    }
     const imageBytes = Number(await docker(["image", "inspect", "--format", "{{.Size}}", image]));
-    assert.ok(imageBytes <= 900_000_000, `PostgreSQL image exceeded 900 MB: ${imageBytes}`);
+    assert.ok(imageBytes <= 650_000_000, `PostgreSQL image exceeded the 650 MB Docker-reported size budget: ${imageBytes}`);
     await docker(["network", "create", network]);
     await docker(["run", "--detach", "--name", postgres, "--network", network, "--env", "POSTGRES_PASSWORD=database-test-only", "postgres:16-bookworm"]);
     let ready = false;
     for (let attempt = 0; attempt < 60; attempt++) {
-      try { await docker(["exec", postgres, "pg_isready", "--username", "postgres"]); ready = true; break; }
+      try { await docker(["exec", postgres, "pg_isready", "--host", "127.0.0.1", "--username", "postgres"]); ready = true; break; }
       catch { await delay(500); }
     }
     assert.ok(ready, "PostgreSQL did not become ready");
@@ -80,7 +84,7 @@ async function main() {
     await execute("python3", ["scripts/export-sqlite.py", join(directory, "source.db"), join(directory, "transfer.json")]);
     await chmod(directory, 0o755);
     await chmod(join(directory, "transfer.json"), 0o644);
-    const transferArgs = ["run", "--rm", "--network", network, ...environment, "--volume", `${directory}:/transfer:ro`, "--entrypoint", "npm", image, "exec", "--", "tsx", "scripts/import-sqlite.ts", "/transfer/transfer.json"];
+    const transferArgs = ["run", "--rm", "--network", network, ...environment, "--volume", `${directory}:/transfer:ro`, "--entrypoint", "npm", image, "run", "db:import-sqlite", "--", "/transfer/transfer.json"];
     const broken = JSON.parse(await readFile(join(directory, "transfer.json"), "utf8")) as Record<string, unknown>;
     broken._EntryToTag = [{ A: "missing-entry", B: "missing-tag" }];
     await writeFile(join(directory, "broken.json"), JSON.stringify(broken), { mode: 0o644 });
@@ -92,7 +96,24 @@ async function main() {
     let refused = false;
     try { await docker(transferArgs); } catch { refused = true; }
     assert.ok(refused, "Transfer must refuse a nonempty destination");
-    assert.ok((await run(["exec", "--", "tsx", "scripts/postgresql-smoke.ts"])).includes("one-use authentication passed"));
+    assert.ok((await docker(["run", "--rm", "--network", network, ...environment, "--entrypoint", "node", image, "runtime/scripts/postgresql-smoke.mjs"])).includes("one-use authentication passed"));
+    const runtime = await docker(["run", "--rm", "--network", network, ...environment, "--entrypoint", "node", image, "runtime/scripts/runtime-smoke.mjs"]);
+    assert.ok(runtime.includes("native-roundtrip"), "Native image/PDF runtime proof failed");
+    console.log(runtime);
+    const runtimeResult: unknown = JSON.parse(runtime.slice(runtime.lastIndexOf("\n") + 1));
+    assert.ok((await run(["run", "maintenance:prune", "--", "--dry-run"])).includes('"dryRun":true'));
+    assert.ok((await run(["run", "export:library", "--", "transfer-reader", "/tmp/operator-export.json"])).includes('"entries":2'));
+    await writeFile(join(directory, "operator-import.json"), JSON.stringify([{
+      url: "https://operator.example/article", title: "Compiled operator import",
+      content: `<article><p>${"Compiled operator content. ".repeat(40)}</p></article>`,
+      tags: ["operator"],
+    }]), { mode: 0o644 });
+    const operatorImport = await docker([
+      "run", "--rm", "--network", network, ...environment,
+      "--volume", `${directory}:/transfer:ro`, "--entrypoint", "npm", image,
+      "run", "import:file", "--", "transfer-reader", "/transfer/operator-import.json", "--importer=v2",
+    ]);
+    assert.ok(operatorImport.includes('"imported":1'), "Compiled import operator did not save its fixture");
     await docker(["exec", postgres, "pg_dump", "-U", "postgres", "--format=custom", "--no-owner", "--no-acl", "--dbname", "app_wallaby", "--file", "/tmp/prior.dump"]);
     await docker(["exec", postgres, "psql", "-X", "-U", "postgres", "--dbname", "app_wallaby", "--set=ON_ERROR_STOP=1", "-c", 'CREATE TABLE "RollbackProbe" (id INTEGER);']);
     await docker(["exec", postgres, "psql", "-X", "-U", "postgres", "--dbname", "app_wallaby", "--set=ON_ERROR_STOP=1", "-c", "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION app_wallaby;"]);
@@ -137,6 +158,12 @@ async function main() {
     assert.equal(session.user?.role, "ADMIN");
     assert.equal((await request("/entries")).status, 200);
     assert.equal((await request("/entries/transfer-entry")).status, 200);
+    const exportedPdf = await request("/export/pdf?id=transfer-entry");
+    assert.equal(exportedPdf.status, 200, "Standalone HTTP PDF export must load its native/runtime assets");
+    assert.equal((await PDFDocument.load(await exportedPdf.arrayBuffer())).getPageCount(), 1);
+    const exportedEpub = await request("/export/epub?id=transfer-entry");
+    assert.equal(exportedEpub.status, 200);
+    assert.ok(unzipSync(new Uint8Array(await exportedEpub.arrayBuffer()))["OEBPS/content.opf"]);
     for (const term of ["PORTABLE", "migration"]) {
       const searched = await (await request(`/api/search?term=${term}`)).json() as { _embedded: { items: { id: string }[] } };
       assert.ok(searched._embedded.items.some(({ id }) => id === "transfer-entry"), "PostgreSQL API search must preserve case-insensitive text and tag matches");
@@ -150,10 +177,12 @@ async function main() {
     assert.equal((await request(`/api/entries/${saved.id}`, { method: "DELETE" })).status, 204);
     const worker = await docker(["run", "--rm", "--network", network, ...environment, "--volume", `${volume}:/app/storage`, image, "npm", "run", "import:worker:once"]);
     assert.ok(worker.includes("Processed 0 import jobs."), "PostgreSQL worker did not complete its smoke");
-    console.log(JSON.stringify({ provider: "postgresql", migrations: "applied", transfer: "verified", rollback: "restored", search: "GIN indexed", web: "ready", worker: "ready", imageBytes }));
+    console.log(JSON.stringify({ provider: "postgresql", migrations: "applied", transfer: "verified", rollback: "restored", search: "GIN indexed", web: "ready", worker: "ready", operators: "import-export-prune", httpExports: "pdf-and-epub", runtime: runtimeResult, imageBytes }));
   } finally {
     await sqlite?.$disconnect();
-    for (const args of [["rm", "--force", web], ["rm", "--force", "--volumes", postgres], ["volume", "rm", volume], ["network", "rm", network], ["image", "rm", image]]) {
+    const cleanup = [["rm", "--force", web], ["rm", "--force", "--volumes", postgres], ["volume", "rm", volume], ["network", "rm", network]];
+    if (!process.env.WALLABY_TEST_IMAGE) cleanup.push(["image", "rm", image]);
+    for (const args of cleanup) {
       try { await docker(args); } catch { /* A failed setup may not create every isolated resource. */ }
     }
     await rm(directory, { recursive: true, force: true });

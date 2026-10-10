@@ -6,6 +6,7 @@ playwright-report
 playwright.config.ts
 test-results
 artifacts
+.tmp
 storage
 .git
 .env

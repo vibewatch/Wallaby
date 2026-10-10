@@ -14,7 +14,7 @@ npx playwright install --with-deps chromium
 DATABASE_URL=file:/tmp/wallaby-release-check.db npm run release
 ```
 
-The release gate requires a running Docker Engine. It runs lint, TypeScript, unit/integration tests, the 2,037-site extraction corpus, a production build, desktop/mobile Playwright workflows, the production audit, Prisma validation, and container acceptance for both SQLite and PostgreSQL. PostgreSQL acceptance uses an isolated PostgreSQL 16 container and restricted application role, tests SQLite transfer fidelity and refusal to overwrite data, indexed search and ownership, authentication, HTTP readiness, and worker execution. Both image profiles must stay below 900 MB uncompressed. The SQLite test checks security headers, non-root execution, administrator bootstrap and shutdown. Test resources are removed after each run. Playwright uses `.tmp/e2e`, its own database and test-only encryption keys; none of these tests uses the operator's database. The placeholder URL above satisfies schema validation without a developer `.env`.
+The release gate requires a running Docker Engine. It runs lint, TypeScript, unit/integration tests, the 2,037-site extraction corpus, a production build, desktop/mobile Playwright workflows, the production audit, Prisma validation, and container acceptance for both SQLite and PostgreSQL. PostgreSQL acceptance uses an isolated PostgreSQL 16 container and restricted application role, tests SQLite transfer fidelity and refusal to overwrite data, indexed search and ownership, authentication, HTTP readiness, and worker execution. Both browser-free image profiles must stay below the 650 MB Docker-reported size budget (`docker image inspect .Size`); this is not a registry download-size measurement. The SQLite test checks security headers, non-root execution, administrator bootstrap and shutdown. Test resources are removed after each run. Playwright uses `.tmp/e2e`, its own database and test-only encryption keys; none of these tests uses the operator's database. The placeholder URL above satisfies schema validation without a developer `.env`.
 
 The scoped `@prisma/config` override selects `deepmerge-ts` 8 to address GHSA-ggr8-5vv4-36mx without downgrading Prisma or mismatching its CLI and generated client. The application uses plain-record Prisma configuration, not the Map-merging behavior changed by that release. Reassess the override when upgrading Prisma.
 
@@ -38,10 +38,34 @@ phrase matching, `unaccent` normalization, and transactionally updated search
 documents; SQLite retains FTS5. Both preserve case-insensitive substring and tag
 search. Missing search indexes fall back to scanning, but database errors surface.
 
-The runtime uses Next.js standalone output. Build caches, SWC build-time
-binaries, source maps and type declarations are excluded; Prisma migrations,
-the import worker, operator commands, extraction definitions and export fonts
-remain available. Chromium is still an opt-in image build.
+The default runtime is Alpine, with only Node, npm, the union of Next.js
+standalone and compiled operator dependency traces, and required runtime assets.
+Yarn, C headers, TypeScript tooling, build caches, SWC build-time binaries, source
+maps and type declarations are excluded. Prisma migrations, the continuous
+import worker, operator commands, PDF/image native libraries, extraction
+definitions and export fonts remain available. npm command names are unchanged;
+their image implementations run build-time-compiled JavaScript rather than tsx.
+
+`INSTALL_CHROMIUM=true` automatically selects Debian slim for the entire build,
+so native dependencies match the browser-supported glibc runtime. It installs
+only Chromium's headless shell, which matches the extractor's current launch
+mode. Do not copy Debian-built native modules into the Alpine profile.
+
+See [image research](IMAGE_SIZE_RESEARCH.md) for primary sources and measurement
+definitions. To prove a particular locally built image without rebuilding it:
+
+```bash
+docker build --build-arg DATABASE_PROVIDER=postgresql -t wallaby:proof-postgresql .
+WALLABY_TEST_IMAGE=wallaby:proof-postgresql npm run test:postgresql
+docker build -t wallaby:proof-sqlite .
+WALLABY_TEST_IMAGE=wallaby:proof-sqlite npm run test:container
+```
+
+Acceptance preserves explicitly supplied images and removes only its isolated
+containers, networks, database volumes and temporary fixtures. It additionally
+checks native canvas/sharp, multilingual PDF export/extraction, EPUB and site
+configuration assets; PostgreSQL acceptance exercises compiled import/export/
+prune operators and authenticated HTTP PDF/EPUB downloads.
 
 ## Required configuration
 
