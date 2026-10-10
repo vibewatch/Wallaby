@@ -11,10 +11,10 @@ Run the complete gate from a clean checkout:
 ```bash
 npm ci
 npx playwright install --with-deps chromium
-npm run release
+DATABASE_URL=file:/tmp/wallaby-release-check.db npm run release
 ```
 
-The release gate requires a running Docker Engine. It runs lint, TypeScript, the complete unit/integration suite, the complete 2,037-site extraction corpus, a production build, isolated desktop/mobile Playwright workflows, the production dependency audit, Prisma schema validation, and a production-container acceptance test. The container test builds a production-dependency-only image, migrates a fresh volume, proves liveness/readiness and security headers as the non-root runtime user, checks Docker health and graceful shutdown, starts the durable worker once, and then removes its uniquely named test resources. Playwright likewise creates a migrated database and media directory under `.tmp/e2e` and removes both after the run; neither gate uses the operator's normal database.
+The release gate requires a running Docker Engine. It runs lint, TypeScript, the complete unit/integration suite, the complete 2,037-site extraction corpus, a production build, isolated desktop/mobile Playwright workflows, the production dependency audit, Prisma schema validation, and a production-container acceptance test. The container test builds a production-dependency-only image, migrates a fresh volume, proves liveness/readiness and security headers as the non-root runtime user, checks Docker health and graceful shutdown, starts the durable worker once, and then removes its uniquely named test resources. Playwright likewise creates a migrated database and media directory under `.tmp/e2e` and removes both after the run; neither gate uses the operator's normal database. The placeholder URL above satisfies schema validation, while browser tests supply their own database and test-only encryption keys without relying on a developer's `.env`.
 
 The scoped `@prisma/config` override selects `deepmerge-ts` 8 to address GHSA-ggr8-5vv4-36mx without downgrading Prisma or mismatching its CLI and generated client. The application uses plain-record Prisma configuration, not the Map-merging behavior changed by that release. Reassess the override when upgrading Prisma.
 
