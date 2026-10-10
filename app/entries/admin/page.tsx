@@ -48,7 +48,7 @@ export default async function AdminPage() {
               <input name="name" required maxLength={100} defaultValue={user.name ?? user.username} aria-label={`Display name for ${user.username}`} />
               <input name="username" required minLength={3} maxLength={50} defaultValue={user.username} aria-label={`Username for ${user.username}`} />
               <input name="email" required type="email" maxLength={320} defaultValue={user.email ?? ""} aria-label={`Email for ${user.username}`} />
-              <select name="role" defaultValue={user.role} aria-label={`Role for ${user.username}`}><option value="USER">Reader</option><option value="ADMIN">Administrator</option></select>
+              <select key={user.role} name="role" defaultValue={user.role} aria-label={`Role for ${user.username}`}><option value="USER">Reader</option><option value="ADMIN">Administrator</option></select>
               <button className="secondary-button"><Save size={13} /> Save</button>
             </form>
             <p>{user._count.entries} entries · {user._count.annotations} annotations · {user._count.apiTokens} API tokens · joined {user.createdAt.toLocaleDateString()}</p>

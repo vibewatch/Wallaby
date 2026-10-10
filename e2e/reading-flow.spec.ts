@@ -530,6 +530,9 @@ test("administrators manage users, roles, passwords, and instance origin rules",
     await submitAdminForm(managedRow.getByRole("button", { name: "Save" }));
     managedRow = page.locator(".admin-user-list article", { has: page.getByLabel(`Username for ${managedUsername}`) });
     await expect(managedRow.getByLabel(`Role for ${managedUsername}`)).toHaveValue("ADMIN");
+    expect((await prisma.user.findUniqueOrThrow({ where: { username: managedUsername } })).role).toBe("ADMIN");
+    await managedRow.locator(".admin-user-form").evaluate((form: HTMLFormElement) => form.reset());
+    await expect(managedRow.getByLabel(`Role for ${managedUsername}`)).toHaveValue("ADMIN");
     await managedPage.goto("/entries/admin");
     await expect(managedPage.getByRole("heading", { name: "Administration" })).toBeVisible();
 
