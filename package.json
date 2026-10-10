@@ -27,6 +27,7 @@
     "test:container": "tsx scripts/verify-container.ts",
     "test:production-config": "vitest run lib/production-config.test.ts",
     "config:validate": "tsx scripts/validate-production.ts",
+    "users:bootstrap": "tsx scripts/bootstrap-admin.ts",
     "images:cleanup": "tsx scripts/cleanup-images.ts",
     "maintenance:prune": "tsx scripts/prune.ts",
     "icons:generate": "tsx scripts/generate-icons.ts",
@@ -59,7 +60,7 @@
     "fflate": "^0.8.3",
     "jsdom": "26.1.0",
     "lucide-react": "0.468.0",
-    "next": "16.3.0",
+    "next": "16.3.8",
     "next-auth": "5.0.0-beta.32",
     "pdf-lib": "^1.17.1",
     "playwright": "1.62.1",
@@ -68,7 +69,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "safe-regex2": "^5.1.1",
-    "sharp": "0.35.3",
+    "sharp": "0.35.5",
     "tsx": "4.20.6",
     "zod": "3.25.76"
   },
@@ -80,7 +81,7 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.1",
-    "eslint-config-next": "16.3.0",
+    "eslint-config-next": "16.3.8",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }

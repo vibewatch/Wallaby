@@ -2,6 +2,8 @@
 
 Wallaby's supported production profile is one Next.js web process, one durable import worker, SQLite on a persistent local volume, and a TLS-terminating reverse proxy. The web and worker must share the database and media volume. Do not place multiple web replicas over the SQLite file; a future PostgreSQL profile is required before horizontal web scaling is supported.
 
+For the EduLoop-style Azure VM and GitHub Actions setup, see [Webstack deployment](VM_DEPLOYMENT.md), including the SQLite-specific rollout and off-VM backup requirements.
+
 ## Release gate
 
 Run the complete gate from a clean checkout:

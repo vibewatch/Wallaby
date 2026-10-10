@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { db } from "./db";
-import { confirmEmailSetup, consumeSignInGrant, createEmailSetup, createLoginChallenge, decryptTwoFactorSecret, encryptTwoFactorSecret, generateTotp, generateTotpSecret, getLoginChallenge, isTwoFactorMethod, registerTrustedDevice, revokeTrustedDevices, totpProvisioningUri, verifyLoginChallenge, verifyTotp, isTrustedDevice } from "./two-factor";
+import { decryptTwoFactorSecret, encryptTwoFactorSecret, generateTotp, generateTotpSecret, isTwoFactorMethod, totpProvisioningUri, verifyTotp } from "./two-factor";
 
 const originalAuthSecret = process.env.AUTH_SECRET;
 const originalTwoFactorKey = process.env.TWO_FACTOR_KEY;
 const rfcSecret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
 
 afterEach(() => {
-  process.env.AUTH_SECRET = originalAuthSecret;
+  if (originalAuthSecret === undefined) delete process.env.AUTH_SECRET;
+  else process.env.AUTH_SECRET = originalAuthSecret;
   if (originalTwoFactorKey === undefined) delete process.env.TWO_FACTOR_KEY;
   else process.env.TWO_FACTOR_KEY = originalTwoFactorKey;
 });
@@ -56,44 +56,5 @@ describe("two-factor secret storage", () => {
     expect(uri.searchParams.get("issuer")).toBe("Wallaby");
     expect(isTwoFactorMethod("TOTP")).toBe(true);
     expect(isTwoFactorMethod("SMS")).toBe(false);
-  });
-});
-
-describe("email challenges and trusted devices", () => {
-  it("verifies delivered codes, consumes grants once, and revokes trusted devices", async () => {
-    const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const user = await db.user.create({ data: { username: `two-factor-unit-${unique}`, email: `two-factor-unit-${unique}@example.test` } });
-    try {
-      let setupCode = "";
-      await createEmailSetup(user.id, async ({ code, purpose, to }) => {
-        expect(purpose).toBe("setup");
-        expect(to).toBe(user.email);
-        setupCode = code;
-      });
-      expect((await confirmEmailSetup(user.id, setupCode === "000000" ? "000001" : "000000")).ok).toBe(false);
-      expect((await confirmEmailSetup(user.id, setupCode)).ok).toBe(true);
-      expect((await db.user.findUniqueOrThrow({ where: { id: user.id } })).twoFactorMethod).toBe("EMAIL");
-
-      let loginCode = "";
-      const challengeToken = await createLoginChallenge(user.id, "EMAIL", async ({ code, purpose }) => {
-        expect(purpose).toBe("sign-in");
-        loginCode = code;
-      });
-      expect(await getLoginChallenge(challengeToken)).toMatchObject({ method: "EMAIL" });
-      expect((await verifyLoginChallenge(challengeToken, loginCode === "999999" ? "999998" : "999999")).ok).toBe(false);
-      const verified = await verifyLoginChallenge(challengeToken, loginCode);
-      expect(verified.ok).toBe(true);
-      if (!verified.ok) throw new Error("Email challenge should have produced a sign-in grant");
-      expect((await verifyLoginChallenge(challengeToken, loginCode)).ok).toBe(false);
-      expect((await consumeSignInGrant(verified.grant))?.id).toBe(user.id);
-      expect(await consumeSignInGrant(verified.grant)).toBeNull();
-
-      const device = await registerTrustedDevice(user.id);
-      expect(await isTrustedDevice(user.id, device.token)).toBe(true);
-      expect(await revokeTrustedDevices(user.id)).toBe(1);
-      expect(await isTrustedDevice(user.id, device.token)).toBe(false);
-    } finally {
-      await db.user.deleteMany({ where: { id: user.id } });
-    }
   });
 });

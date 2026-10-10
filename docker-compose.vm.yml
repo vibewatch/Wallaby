@@ -1,0 +1,36 @@
+name: wallaby
+
+x-runtime: &runtime
+  image: ${APP_IMAGE:?Set the immutable application image}
+  env_file:
+    - path: app.env
+      format: raw
+  volumes:
+    - ./storage:/app/storage
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  mem_limit: 1g
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  web:
+    <<: *runtime
+    ports:
+      - "127.0.0.1:10002:3000"
+  worker:
+    <<: *runtime
+    command: ["npm", "run", "import:worker"]
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      disable: true

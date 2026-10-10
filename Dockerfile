@@ -59,6 +59,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+ARG DEPLOYMENT_VERSION
+ENV DEPLOYMENT_VERSION=$DEPLOYMENT_VERSION
+
 # Generate the Prisma client, then build. A fixed, unreachable placeholder
 # DATABASE_URL keeps Prisma happy during route metadata collection — never bake
 # real credentials into an image layer.

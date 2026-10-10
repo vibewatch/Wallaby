@@ -25,3 +25,5 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run release
+        env:
+          DATABASE_URL: file:${{ runner.temp }}/wallaby-release.db

@@ -152,6 +152,21 @@ async function main(): Promise<void> {
 
     const uid = await docker(["exec", container, "id", "-u"]);
     if (uid !== "1001") throw new Error(`container ran as unexpected uid ${JSON.stringify(uid)}`);
+    const bootstrap = await docker([
+      "exec", "--env", "BOOTSTRAP_ADMIN_PASSWORD=Container-bootstrap-password-1",
+      container, "npm", "run", "users:bootstrap",
+    ]);
+    if (!bootstrap.includes("Administrator created.")) throw new Error("administrator bootstrap did not create the initial account");
+    const repeatedBootstrap = await docker([
+      "exec", "--env", "BOOTSTRAP_ADMIN_PASSWORD=Container-bootstrap-password-2",
+      container, "npm", "run", "users:bootstrap",
+    ]);
+    if (!repeatedBootstrap.includes("no account was changed")) throw new Error("administrator bootstrap was not idempotent");
+    const bootstrapState = await docker([
+      "exec", container, "node", "-e",
+      "const { PrismaClient } = require('@prisma/client'); const { compare } = require('bcryptjs'); const db = new PrismaClient(); (async () => { const users = await db.user.findMany(); if (users.length !== 1 || users[0].username !== 'admin' || users[0].role !== 'ADMIN' || !await compare('Container-bootstrap-password-1', users[0].passwordHash)) throw new Error('Bootstrap created an unexpected account or changed its password'); console.log('bootstrap-ok'); })().finally(() => db.$disconnect()).catch(() => { process.exitCode = 1; });",
+    ]);
+    if (bootstrapState !== "bootstrap-ok") throw new Error("administrator credentials did not survive repeated bootstrap");
     await docker([
       "exec", container, "node", "-e",
       "for (const dependency of ['@playwright/test','eslint','vitest']) { try { require.resolve(dependency); throw new Error(`development dependency present: ${dependency}`); } catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; } }",
@@ -182,6 +197,7 @@ async function main(): Promise<void> {
       health: "healthy",
       uid: Number(uid),
       worker: "ready",
+      administrator: "created-without-demo-account",
       shutdownMs,
     }));
   } catch (error) {

@@ -31,6 +31,10 @@ Library ranked searches return up to 500 matching entries after applying the sel
 
 ## Local setup
 
+For GitHub Actions deployment alongside EduLoop on the shared Azure VM, see
+[Webstack VM deployment](docs/VM_DEPLOYMENT.md). It uses persistent local SQLite
+and media storage; a Blob account is not required for runtime.
+
 Requirements: Node.js 22.12 or newer and npm 10 or newer. The container and CI use Node.js 24.
 
 ```bash
