@@ -28,7 +28,7 @@ export function EntryCard({ entry, list = "", selectionFormId, highlight = null,
     <article className={`entry-card${compact ? " compact" : ""}${displayThumbnail ? "" : " no-thumbnail"}`} data-entry-card={entry.id}>
       {selectionFormId ? <input className="entry-select" type="checkbox" name="ids" value={entry.id} form={selectionFormId} aria-label={`Select ${entry.title}`} /> : null}
       {displayThumbnail ? <Link href={href} className="entry-cover" aria-label={`Read ${entry.title}`}>
-        {entry.previewPicture ? <span style={{ backgroundImage: `url(${JSON.stringify(entry.previewPicture).slice(1, -1)})` }} /> : <span className="cover-placeholder">{entry.domainName?.slice(0, 1).toUpperCase() ?? "W"}</span>}
+        {entry.previewPicture ? <span style={{ backgroundImage: `url(${JSON.stringify(entry.previewPicture).slice(1, -1)})` }} /> : <span className="cover-placeholder"><span>{entry.domainName?.slice(0, 1).toUpperCase() ?? "W"}</span><small>{entry.domainName ?? "Saved reading"}</small></span>}
       </Link> : null}
       <div className="entry-card-body">
         <div className="entry-meta">

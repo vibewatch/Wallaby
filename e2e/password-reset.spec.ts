@@ -2,7 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { expect, test } from "@playwright/test";
 import { hash } from "bcryptjs";
 
-import { e2eMailPort } from "./environment";
+import { e2eBaseUrl, e2eMailPort } from "./environment";
 import { startMailSink } from "./mail-sink";
 
 let sink: Awaited<ReturnType<typeof startMailSink>>;
@@ -30,8 +30,9 @@ test("a forgotten password can be reset from an emailed link", async ({ page }, 
     await page.getByRole("button", { name: "Email me a reset link" }).click();
     await expect(page.getByRole("status")).toContainText("If that account has an email address");
     const mail = await sink.waitFor(email);
-    const link = /http:\/\/127\.0\.0\.1:3100\/auth\/reset\/[A-Za-z0-9_-]{43}/.exec(mail.body)?.[0];
+    const link = mail.body.match(/http:\/\/127\.0\.0\.1:\d+\/auth\/reset\/[A-Za-z0-9_-]{43}/)?.[0];
     expect(link, mail.body).toBeTruthy();
+    expect(new URL(link!).origin).toBe(e2eBaseUrl);
     expect(sink.messages.filter((message) => message.to.some((to) => to.startsWith("nobody-")))).toHaveLength(0);
 
     await page.goto(link!);

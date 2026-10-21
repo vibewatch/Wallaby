@@ -13,6 +13,7 @@ import { getMediaRoot, resolveMediaPath } from "../lib/article-images";
 import { identityThrottleKey } from "../lib/auth-throttle";
 import { generateTotp } from "../lib/two-factor";
 import { signIn } from "./helpers";
+import { e2eBaseUrl } from "./environment";
 
 async function followMobileUtilityLink(page: Page, name: string) {
   await page.locator('summary[aria-label="More navigation"]').click();
@@ -198,7 +199,7 @@ test("reader retries failed progress saves and stops rewriting a finished positi
 test("protected routes redirect to a usable responsive sign-in page", async ({ page }) => {
   await page.goto("/entries");
   await expect(page).toHaveURL(/\/auth\/signin/);
-  await expect(page.getByRole("heading", { name: /Keep the web worth keeping/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /A home for your next idea/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
@@ -590,14 +591,14 @@ test("administrators manage users, roles, passwords, and instance origin rules",
 test("downloaded article media is public, cacheable, and deleted with its entry", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chrome", "Media lifecycle needs one browser profile");
   const prisma = new PrismaClient();
-  const anonymousApi = await apiRequest.newContext({ baseURL: "http://127.0.0.1:3100" });
+  const anonymousApi = await apiRequest.newContext({ baseURL: e2eBaseUrl });
   const unique = Date.now();
   let entryId: string | null = null;
   let entryDirectory: string | null = null;
 
   try {
     await signIn(page);
-    const user = await prisma.user.findUniqueOrThrow({ where: { username: "demo" } });
+    const user = await prisma.user.findUniqueOrThrow({ where: { username: "test-reader" } });
     const creation = await page.request.post("/api/entries", { data: {
       url: `https://media-${unique}.example/article`,
       title: `Downloaded media lifecycle ${unique}`,
@@ -691,7 +692,7 @@ test("two-factor authentication supports TOTP, trusted devices, recovery, and di
       csrfToken,
       username,
       password,
-      callbackUrl: "http://127.0.0.1:3100/entries",
+      callbackUrl: `${e2eBaseUrl}/entries`,
     } });
     await bypassPage.goto("/entries");
     await expect(bypassPage).toHaveURL(/\/auth\/signin/);
@@ -760,7 +761,7 @@ test("a one-time bearer token authenticates without a browser session", async ({
   const token = await page.locator(".token-secret code").textContent();
   expect(token).toMatch(/^wby_/);
 
-  const anonymousApi = await apiRequest.newContext({ baseURL: "http://127.0.0.1:3100" });
+  const anonymousApi = await apiRequest.newContext({ baseURL: e2eBaseUrl });
   const response = await anonymousApi.get("/api/config", { headers: { authorization: `Bearer ${token}` } });
   expect(response.status()).toBe(200);
   await expect.poll(async () => (await response.json()).language).toBe("en");
@@ -828,7 +829,7 @@ test("an OAuth client completes authorization-code, API, refresh, and revocation
   await signIn(page);
   const unique = Date.now();
   const clientName = `Browser OAuth ${unique}`;
-  const redirectUri = `http://127.0.0.1:3100/oauth-callback-${unique}`;
+  const redirectUri = `${e2eBaseUrl}/oauth-callback-${unique}`;
   await page.goto("/entries/developer");
   await page.getByLabel("Application name").fill(clientName);
   await page.getByLabel("Exact redirect URLs, one per line").fill(redirectUri);
@@ -842,7 +843,7 @@ test("an OAuth client completes authorization-code, API, refresh, and revocation
   const clientRow = page.locator(".oauth-client-list article", { hasText: clientName });
   await expect(clientRow).toContainText("authorization_code, refresh_token");
 
-  const authorization = new URL("http://127.0.0.1:3100/oauth/v2/auth");
+  const authorization = new URL(`${e2eBaseUrl}/oauth/v2/auth`);
   authorization.searchParams.set("response_type", "code");
   authorization.searchParams.set("client_id", clientId);
   authorization.searchParams.set("redirect_uri", redirectUri);
@@ -912,13 +913,13 @@ test("wallabag JSON aliases, filters, XML, search, and errors honor the compatib
   } });
   expect(createdResponse.status()).toBe(200);
   const created = await createdResponse.json() as { id: string; content: string; user_name: string; is_public: boolean; tags: { id: string; label: string }[] };
-  expect(created).toMatchObject({ user_name: "demo", is_public: true });
+  expect(created).toMatchObject({ user_name: "test-reader", is_public: true });
   expect(created.content).toContain("<p>Offline contract content.</p>");
   expect(created.tags.map((tag) => tag.label).sort()).toEqual(["api-contract", "portable"]);
 
   const metadata = await page.request.get(`/api/entries/${created.id}.json?detail=metadata`);
   expect(metadata.status()).toBe(200);
-  expect(await metadata.json()).toMatchObject({ id: created.id, content: null, user_name: "demo", user_email: "demo@wallaby.local" });
+  expect(await metadata.json()).toMatchObject({ id: created.id, content: null, user_name: "test-reader", user_email: "reader@example.test" });
   const wrongDetail = await page.request.get(`/api/entries/${created.id}.json?detail=unknown`);
   expect(wrongDetail.status()).toBe(400);
   expect(await wrongDetail.json()).toMatchObject({ error: "invalid_parameter", "@type": "hydra:Error" });
@@ -953,7 +954,7 @@ test("wallabag JSON aliases, filters, XML, search, and errors honor the compatib
   expect(await info.json()).toEqual({ appname: "wallabag", version: "0.1.0", allowed_registration: false });
   expect(await (await page.request.get("/api/version.json")).json()).toBe("0.1.0");
 
-  const anonymousApi = await apiRequest.newContext({ baseURL: "http://127.0.0.1:3100" });
+  const anonymousApi = await apiRequest.newContext({ baseURL: e2eBaseUrl });
   const denied = await anonymousApi.get("/api/config.json");
   expect(denied.status()).toBe(401);
   expect(await denied.json()).toMatchObject({ error: "access_denied", error_description: "OAuth2 authentication required", "hydra:title": "Authentication required" });
@@ -1660,18 +1661,18 @@ test("private feeds support tag pagination, limits, and RSS", async ({ page }, t
       entries.push({ ...(await response.json() as { id: string }), title });
     }
 
-    const first = await page.request.get(`/feed/demo/${token}/tags/${tag}`);
-    const second = await page.request.get(`/feed/demo/${token}/tags/${tag}/2`);
+    const first = await page.request.get(`/feed/test-reader/${token}/tags/${tag}`);
+    const second = await page.request.get(`/feed/test-reader/${token}/tags/${tag}/2`);
     expect(first.status()).toBe(200);
     expect(second.status()).toBe(200);
     expect(first.headers()["content-type"]).toContain("application/atom+xml");
     const combined = `${await first.text()}${await second.text()}`;
     for (const entry of entries) expect(combined).toContain(entry.title);
-    const rss = await page.request.get(`/feed/demo/${token}/tags/${tag}?format=rss`);
+    const rss = await page.request.get(`/feed/test-reader/${token}/tags/${tag}?format=rss`);
     expect(rss.status()).toBe(200);
     expect(rss.headers()["content-type"]).toContain("application/rss+xml");
     expect(await rss.text()).toContain("<rss version=\"2.0\">");
-    const numericTagPath = `/feed/demo/${token}/tags/${unique}`;
+    const numericTagPath = `/feed/test-reader/${token}/tags/${unique}`;
     const numericTag = await page.request.get(numericTagPath);
     expect(numericTag.status()).toBe(200);
     const numericBody = await numericTag.text();

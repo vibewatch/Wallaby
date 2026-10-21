@@ -12,7 +12,7 @@ export function SignInForm({ callbackUrl }: { callbackUrl?: string }) {
       {callbackUrl ? <input type="hidden" name="callbackUrl" value={callbackUrl} /> : null}
       <label>
         <span>Username or email</span>
-        <input name="username" type="text" autoComplete="username" required autoFocus placeholder="demo" defaultValue={state.username} />
+        <input name="username" type="text" autoComplete="username" required autoFocus placeholder="Your username or email" defaultValue={state.username} />
       </label>
       <label>
         <span>Password</span>

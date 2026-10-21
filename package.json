@@ -53,6 +53,9 @@
   },
   "dependencies": {
     "@auth/prisma-adapter": "2.11.3",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/mona-sans": "^5.3.0",
+    "@fontsource-variable/noto-sans-sc": "^5.3.1",
     "@fontsource/unifont": "^5.3.0",
     "@pdf-lib/fontkit": "^1.1.1",
     "@prisma/client": "6.19.3",
@@ -82,8 +85,8 @@
     "@types/qrcode": "1.5.6",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
-    "eslint": "9.39.1",
     "esbuild": "0.25.12",
+    "eslint": "9.39.1",
     "eslint-config-next": "16.3.8",
     "typescript": "5.9.3",
     "vitest": "4.1.10"

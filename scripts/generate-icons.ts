@@ -9,9 +9,9 @@ import sharp from "sharp";
  * the artwork below; the PNGs it writes are committed so builds stay offline.
  */
 
-const FOREST = "#31594c";
-const FOREST_DEEP = "#24453b";
-const PAPER = "#f7f5ef";
+const TERRACOTTA = "#b74e32";
+const TERRACOTTA_DEEP = "#973e27";
+const PAPER = "#f5f4ed";
 
 /** The open book from the sidebar brand, drawn on a transparent background. */
 function glyph(stroke: string, scale: number): string {
@@ -25,7 +25,7 @@ function glyph(stroke: string, scale: number): string {
 /** Full-bleed tile: safe for `purpose: maskable`, where the OS crops the edges. */
 function maskable(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-    <rect width="512" height="512" fill="${FOREST}" />
+    <rect width="512" height="512" fill="${TERRACOTTA}" />
     ${glyph(PAPER, 12)}
   </svg>`;
 }
@@ -33,8 +33,8 @@ function maskable(): string {
 /** Rounded tile with margin, used where the icon is shown as-is. */
 function standard(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-    <rect width="512" height="512" rx="112" fill="${FOREST}" />
-    <rect x="8" y="8" width="496" height="496" rx="106" fill="none" stroke="${FOREST_DEEP}" stroke-width="6" />
+    <rect width="512" height="512" rx="112" fill="${TERRACOTTA}" />
+    <rect x="8" y="8" width="496" height="496" rx="106" fill="none" stroke="${TERRACOTTA_DEEP}" stroke-width="6" />
     ${glyph(PAPER, 14)}
   </svg>`;
 }
@@ -42,7 +42,7 @@ function standard(): string {
 /** iOS composites onto black if the icon is transparent, so keep it opaque. */
 function apple(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-    <rect width="512" height="512" fill="${FOREST}" />
+    <rect width="512" height="512" fill="${TERRACOTTA}" />
     ${glyph(PAPER, 13)}
   </svg>`;
 }

@@ -123,7 +123,8 @@ one-time credentials are in root-only
 web container's environment. Retrieve them through the existing administrator
 access, sign in, change the password, and remove that bootstrap file. Repeated
 bootstrap never resets an existing administrator or promotes another account.
-**Production never runs `db:seed`, which creates the development demo account.**
+**No setup command creates demo accounts or sample articles.** `db:seed` now
+initializes only instance configuration and redirect-origin rules.
 
 For an operator-supplied initial account, the image also exposes
 `npm run users:bootstrap` with `BOOTSTRAP_ADMIN_USERNAME` and

@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Download, Search, Shuffle, SlidersHorizontal } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpenText, Download, Import, Plus, Search, Shuffle, SlidersHorizontal } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -12,9 +12,10 @@ import { requireUser } from "@/lib/auth-user";
 import { db } from "@/lib/db";
 import { tagSuggestions } from "@/lib/entries";
 import { advancedFilterNames, parseEntryFilters } from "@/lib/entry-filters";
-import { listQuery } from "@/lib/entry-list";
+import { entryHref, listQuery } from "@/lib/entry-list";
 import { entryOrderBy, parseEntrySort } from "@/lib/entry-sort";
 import { pageNumber } from "@/lib/pagination";
+import { PROGRESS_FINISHED, PROGRESS_STARTED, progressPercent } from "@/lib/reading-progress";
 import { findEntryPage, resolveEntryQuery, tokenizeSearch } from "@/lib/search";
 
 export const metadata: Metadata = { title: "Library" };
@@ -52,12 +53,19 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
   const highlight = query ? tokenizeSearch(query) : null;
   const sort = parseEntrySort(params.sort, Boolean(query));
   const list = listQuery(params);
+  const hasAdvancedFilters = advancedFilterNames.some((name) => Boolean(stringValue(params[name])));
+  const isFiltered = Boolean(query || tag || hasAdvancedFilters || view === "same-domain");
 
-  const [{ entries, total }, selectedTag, languageRows, tagLabels] = await Promise.all([
+  const [{ entries, total }, selectedTag, languageRows, tagLabels, resumeEntry] = await Promise.all([
     findEntryPage({ where, ranked: sort === "relevance" ? ranked : null, orderBy: entryOrderBy(sort), page, pageSize, includeContent: Boolean(query) }),
     tag ? db.tag.findFirst({ where: { userId: user.id, slug: tag } }) : null,
     db.entry.findMany({ where: { userId: user.id, language: { not: null } }, distinct: ["language"], select: { language: true }, orderBy: { language: "asc" } }),
     tagSuggestions(user.id),
+    view === "unread" && !isFiltered && page === 1 ? db.entry.findFirst({
+      where: { userId: user.id, archived: false, readingProgress: { gte: PROGRESS_STARTED, lt: PROGRESS_FINISHED } },
+      orderBy: { readingProgressAt: "desc" },
+      select: { id: true, title: true, domainName: true, readingProgress: true },
+    }) : null,
   ]);
   const label = selectedTag
     ? { title: `#${selectedTag.label}`, subtitle: "Entries filed with this tag." }
@@ -65,24 +73,42 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
       ? { title: sourceEntry.domainName, subtitle: "Saved entries from the same domain." }
       : viewLabels[view];
   const pages = Math.max(1, Math.ceil(total / pageSize));
-  const hasAdvancedFilters = advancedFilterNames.some((name) => Boolean(stringValue(params[name])));
+  const emptyTitle = isFiltered ? "No matching entries" : ({
+    unread: "Room for your next idea.",
+    starred: "Keep the standouts close.",
+    archive: "Good reading stays with you.",
+    annotated: "Turn reading into thinking.",
+    untagged: "Everything in its place.",
+  }[view] ?? "Your library starts here.");
+  const emptyDescription = isFiltered ? "No articles match this view. Try fewer filters or a different search." : ({
+    unread: "Save something worth your attention, or bring your reading list with you.",
+    starred: "Star an article to collect the pieces you want to return to.",
+    archive: "Archive articles when you finish. Their saved copies stay here.",
+    annotated: "Highlight a passage or add a note in the reader. Find those ideas here.",
+    untagged: "Articles without tags will appear here when you save them.",
+  }[view] ?? "Save your first article or import an existing collection. No samples, just your reading.");
 
   return (
     <div className="library-page">
       <header className="library-header">
-        <div><p className="eyebrow">Your library</p><h1>{label.title}</h1><p>{label.subtitle}</p></div>
+        <div><p className="eyebrow">Your personal reading space</p><h1>{label.title}<span className="heading-count" aria-hidden="true">{total}</span></h1><p>{label.subtitle}</p></div>
         <AddEntry tagSuggestions={tagLabels} />
       </header>
+      {resumeEntry ? <Link className="continue-reading" href={entryHref(resumeEntry.id, list)} aria-label={`Continue reading ${resumeEntry.title}`}>
+        <span className="continue-icon"><BookOpenText size={25} strokeWidth={1.5} /></span>
+        <div><p className="eyebrow">Pick up where you left off</p><h2>{resumeEntry.title}</h2><p>{resumeEntry.domainName ?? "Saved article"} <span>· {progressPercent(resumeEntry.readingProgress)}% read</span></p></div>
+        <span className="continue-action">Continue <ArrowRight size={18} /></span>
+      </Link> : null}
       <form className="search-bar">
         <Search size={18} />
-        <input name="q" defaultValue={query} placeholder={'Search titles, content, domains, and tags — "quote a phrase"'} aria-label="Search your library" />
+        <input name="q" defaultValue={query} placeholder="Find an article, an idea, a source…" aria-label="Search your library" />
         <input type="hidden" name="view" value={view} />
         {tag ? <input type="hidden" name="tag" value={tag} /> : null}
         {sourceEntryId ? <input type="hidden" name="entry" value={sourceEntryId} /> : null}
         {advancedFilterNames.map((name) => stringValue(params[name]) ? <input key={name} type="hidden" name={name} value={stringValue(params[name])} /> : null)}
         {sort !== "newest" && sort !== "relevance" ? <input type="hidden" name="sort" value={sort} /> : null}
         <kbd>/</kbd>
-        <kbd>Enter</kbd>
+        <button type="submit" aria-label="Search library"><ArrowRight size={18} /></button>
       </form>
       <details className="advanced-filters" open={hasAdvancedFilters}>
         <summary><SlidersHorizontal size={15} /> Advanced filters{hasAdvancedFilters ? <small>Active</small> : null}</summary>
@@ -112,7 +138,7 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
           <div className="advanced-filter-actions"><Link href={clearFilterUrl(view, tag, sourceEntryId)}>Clear filters</Link><button className="secondary-button">Apply filters</button></div>
         </form>
       </details>
-      <div className="results-line"><span>{total} {total === 1 ? "entry" : "entries"}</span><SortSelect value={sort === "relevance" && !ranked ? "newest" : sort} searching={Boolean(query)} params={sortParams(params)} /><Link href={resultsUrl("/entries/random", params)}><Shuffle size={13} /> Read a random entry</Link><Link href={resultsUrl("/export/json", params)}><Download size={13} /> Export results</Link></div>
+      <div className="results-line"><span>{total} {total === 1 ? "entry" : "entries"}</span><SortSelect value={sort === "relevance" && !ranked ? "newest" : sort} searching={Boolean(query)} params={sortParams(params)} /><div className="result-actions"><Link href={resultsUrl("/entries/random", params)}><Shuffle size={14} /> Read a random entry</Link><Link href={resultsUrl("/export/json", params)}><Download size={14} /> Export results</Link></div></div>
       {entries.length ? <ActionForm action={bulkUpdateEntries} id="bulk-entries" className="bulk-toolbar" confirmation={{ field: "action", value: "delete", message: "Delete the selected entries? This removes their saved copies and cannot be undone." }}>
         <label><span>Selected entries</span><select name="action" defaultValue="toggle-read" aria-label="Bulk action">
           <option value="toggle-read">Toggle read / unread</option>
@@ -136,7 +162,12 @@ export default async function EntriesPage({ searchParams }: { searchParams: Sear
           readingSpeed={preference?.readingSpeed ?? 200}
         />)}
         {!entries.length ? (
-          <div className="empty-state"><span>∿</span><h2>{query ? "No matching entries" : "A clear reading list"}</h2><p>{query ? "Try a broader search or another filter." : "Save an article when you find something worth returning to."}</p></div>
+          <div className="empty-state">
+            <span className="empty-mark"><BookOpenText size={36} strokeWidth={1.2} /></span>
+            <p className="eyebrow">{isFiltered ? "A different perspective" : "Make space for what matters"}</p>
+            <h2>{emptyTitle}</h2><p>{emptyDescription}</p>
+            <div className="empty-actions">{isFiltered ? <Link className="primary-button" href="/entries?view=all">View all entries <ArrowRight size={16} /></Link> : <><Link className="primary-button" href="/entries/new"><Plus size={16} /> Save your first article</Link><Link className="empty-secondary" href="/entries/import"><Import size={16} /> Import your library</Link></>}</div>
+          </div>
         ) : null}
       </section>
       {pages > 1 ? (

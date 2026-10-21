@@ -92,8 +92,8 @@ test("the share page pre-fills the form, and sign-in keeps what was shared", asy
 
   await page.goto(sharePath);
   await expect(page).toHaveURL(/\/auth\/signin\?callbackUrl=/);
-  await page.getByLabel("Username or email").fill("demo");
-  await page.getByLabel("Password").fill("wallaby-demo");
+  await page.getByLabel("Username or email").fill("test-reader");
+  await page.getByLabel("Password").fill("wallaby-test-password");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/entries\/new\?title=/);
 

@@ -42,13 +42,25 @@ Requirements: Node.js 22.12 or newer and npm 10 or newer. The container and CI u
 cp .env.example .env
 npm install
 npm run db:setup
+read -rsp "Administrator password (16+ characters): " BOOTSTRAP_ADMIN_PASSWORD; echo
+export BOOTSTRAP_ADMIN_PASSWORD
+npm run users:bootstrap
+unset BOOTSTRAP_ADMIN_PASSWORD
 npm run dev
 ```
 
-Open `http://localhost:3000` and use the seeded local account:
+Open `http://localhost:3000` and sign in as `admin` with the password you just set.
+Set `BOOTSTRAP_ADMIN_USERNAME` before bootstrap to choose a different username.
+Setup seeds only instance configuration and redirect-origin rules, never accounts
+or sample articles. Create additional accounts in **Administration**. Bootstrap
+is a deployment CLI command, not a public registration or HTTP setup endpoint;
+running it again never resets an existing administrator.
 
-- username: `demo` (administrator on a fresh seed)
-- password: `wallaby-demo`
+Upgrading a former demo installation? Sign in to the old account, create a new
+administrator with a unique password under **Administration**, then sign in as
+that administrator and delete the old demo account. Export any reading you want
+to retain first: deleting an account also deletes its library. Upgrades never
+silently erase existing reading data.
 
 Replace `AUTH_SECRET` and `SITE_CREDENTIALS_KEY` before using Wallaby outside local development. The latter must decode to exactly 32 random bytes and protects publication usernames/passwords with AES-256-GCM. Authenticator-app 2FA encrypts TOTP secrets with `TWO_FACTOR_KEY` when provided, or a domain-separated key derived from a strong `AUTH_SECRET`; email-code 2FA and password reset additionally require the `TWO_FACTOR_SMTP_*` and `TWO_FACTOR_EMAIL_FROM` settings documented in `.env.example`; reset links are built only from `AUTH_URL`, never from request headers. SQLite remains the zero-configuration local default. Production PostgreSQL builds use `--build-arg DATABASE_PROVIDER=postgresql`; database commands select the provider from `DATABASE_PROVIDER` or `DATABASE_URL`. See [Production operations](docs/PRODUCTION.md#database-providers).
 
@@ -64,7 +76,7 @@ Before a production release, run the complete isolated browser and operational g
 Apply every saved tagging rule to an existing user's library from the command line with:
 
 ```bash
-npm run tag:all -- demo
+npm run tag:all -- admin
 ```
 
 Imports are stored before article processing begins. Run one worker process beside the web application with either database provider:
@@ -78,15 +90,15 @@ npm run import:worker
 The operator command surface uses the same persistence and extraction boundaries as the web application:
 
 ```bash
-npm run import:file -- demo ./wallabag.json --importer=v2
-npm run import:url -- demo https://example.com/story --tags=research,web
-npm run export:library -- demo ./demo-export.json
-npm run entries:reload -- demo --only-not-parsed --yes
-npm run entries:dedupe -- demo
-npm run tag:all -- demo
+npm run import:file -- admin ./wallabag.json --importer=v2
+npm run import:url -- admin https://example.com/story --tags=research,web
+npm run export:library -- admin ./library-export.json
+npm run entries:reload -- admin --only-not-parsed --yes
+npm run entries:dedupe -- admin
+npm run tag:all -- admin
 npm run images:cleanup -- --dry-run
 npm run maintenance:prune -- --dry-run
-npm run oauth:create-client -- demo --redirect-uri=https://reader.example/oauth/callback --format=env
+npm run oauth:create-client -- admin --redirect-uri=https://reader.example/oauth/callback --format=env
 ```
 
 File imports accept wallabag's importer names and `--markAsRead`, `--useUserId`, and `--disableContentUpdate` spellings as well as kebab-case equivalents. Add `--queue-only` when a separate worker should claim the new job. Exports refuse to overwrite a file unless `--force` is supplied. Duplicate cleanup retains the oldest entry while merging status, tags, and annotations and removing the duplicate's local media. `maintenance:prune` deletes expired sign-in, two-factor, password-reset, OAuth, and Pocket credentials, stale throttle counters, and the item payloads of imports finished more than 30 days ago (job summaries stay); a continuous import worker runs it hourly.
@@ -128,6 +140,13 @@ curl -H "Authorization: Bearer wby_..." http://localhost:3000/api/entries
 Session-authenticated browser calls work too. JSON and XML aliases use wallabag names and envelopes (`is_archived`, `is_starred`, `reading_time`, `published_by`, `_embedded`, and `_links`), and structured errors include OAuth plus Hydra fields. IDs remain opaque strings because Wallaby uses collision-resistant Prisma IDs rather than wallabag's enumerable sequential integers; all API routes accept that representation consistently.
 
 ## Architecture
+
+The interface uses Mona Sans, Noto Sans SC, and JetBrains Mono, matching the
+font families at [genisisiq.com](https://genisisiq.com). Fonts are self-hosted
+through Fontsource's SIL Open Font License packages: no Google Fonts or other
+third-party font requests are made by readers, and builds require no font CDN.
+The article reader retains its selectable serif/sans preference. Font copyright
+notices and license terms are shipped in [public/font-licenses.txt](public/font-licenses.txt).
 
 - `app/` — Next.js App Router pages, server actions, imports/exports, public feeds, and REST routes
 - `auth.ts` — Auth.js configuration and credentials provider

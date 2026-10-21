@@ -65,7 +65,7 @@ test("the reader steps through the list it was opened from and can move on after
   }
   const listPath = `/entries?view=unread&tag=${tag}&sort=title`;
   const prisma = new PrismaClient();
-  const demo = await prisma.user.findUniqueOrThrow({ where: { username: "demo" }, select: { id: true } });
+  const reader = await prisma.user.findUniqueOrThrow({ where: { username: "test-reader" }, select: { id: true } });
   try {
     await page.goto(listPath);
     await page.getByRole("link", { name: `Alpha ${tag}` }).first().click();
@@ -98,13 +98,13 @@ test("the reader steps through the list it was opened from and can move on after
     // Alpha has left Unread, so Bravo is now the first entry of the list.
     await expect(pager.getByRole("link", { name: /Previous/ })).toHaveCount(0);
 
-    await prisma.userPreference.update({ where: { userId: demo.id }, data: { afterArchive: "list" } });
+    await prisma.userPreference.update({ where: { userId: reader.id }, data: { afterArchive: "list" } });
     await page.keyboard.press("e");
     await expect(page).toHaveURL(new RegExp(`${listPath.replace(/[?]/g, "\\?")}$`));
     await expect(page.locator(".entry-list .entry-title")).toHaveCount(1);
     await expect(page.locator(".entry-list")).toContainText(`Charlie ${tag}`);
   } finally {
-    await prisma.userPreference.update({ where: { userId: demo.id }, data: { afterArchive: "stay" } });
+    await prisma.userPreference.update({ where: { userId: reader.id }, data: { afterArchive: "stay" } });
     await prisma.$disconnect();
     for (const id of Object.values(ids)) await page.request.delete(`/api/entries/${id}`);
   }

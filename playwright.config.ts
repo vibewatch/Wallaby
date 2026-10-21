@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-import { e2eEnvironment } from "./e2e/environment";
+import { e2eBaseUrl, e2eEnvironment, e2ePort } from "./e2e/environment";
 
 Object.assign(process.env, e2eEnvironment);
 
@@ -14,7 +14,7 @@ export default defineConfig({
   expect: { timeout: 8_000 },
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:3100",
+    baseURL: e2eBaseUrl,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
@@ -23,9 +23,9 @@ export default defineConfig({
     { name: "mobile-chrome", use: { ...devices["Pixel 7"] } },
   ],
   webServer: {
-    command: "npm run build && npm run start -- --hostname 127.0.0.1 --port 3100",
+    command: `npm run build && npm run start -- --hostname 127.0.0.1 --port ${e2ePort}`,
     env: e2eEnvironment,
-    url: "http://127.0.0.1:3100/auth/signin",
+    url: `${e2eBaseUrl}/auth/signin`,
     reuseExistingServer: false,
     timeout: 180_000,
   },

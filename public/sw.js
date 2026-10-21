@@ -7,7 +7,7 @@
  * outlives sign-out, so user content is left to the network.
  */
 
-const VERSION = "wallaby-v1";
+const VERSION = "wallaby-v2";
 const ASSETS = `${VERSION}-assets`;
 const SHELL = `${VERSION}-shell`;
 const OFFLINE_URL = "/offline";

@@ -1,22 +1,8 @@
-import { hash } from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  const passwordHash = await hash("wallaby-demo", 12);
-  await prisma.user.upsert({
-    where: { username: "demo" },
-    update: {},
-    create: {
-      username: "demo",
-      name: "Demo Reader",
-      email: "demo@wallaby.local",
-      passwordHash,
-      role: "ADMIN",
-      preference: { create: {} },
-    },
-  });
   for (const rule of [
     'host = "feedproxy.google.com"',
     'host = "feeds.reuters.com"',

@@ -1,6 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 
-export async function signIn(page: Page, username = "demo", password = "wallaby-demo") {
+export async function signIn(page: Page, username = "test-reader", password = "wallaby-test-password") {
   await page.goto("/auth/signin");
   await page.getByLabel("Username or email").fill(username);
   await page.getByLabel("Password").fill(password);
