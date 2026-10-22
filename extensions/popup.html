@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Save to Wallaby</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="popup.js" defer></script>
+</head>
+<body class="popup">
+  <header class="masthead">
+    <a class="brand" href="https://github.com/huangyingting/Wallaby" target="_blank" rel="noreferrer"><img src="icons/48.png" width="28" height="28" alt="">wallaby<span class="brand-dot">.</span></a>
+    <button class="text-button" id="settings" type="button">Settings</button>
+  </header>
+  <main>
+    <p class="eyebrow" id="host">YOUR READING SPACE</p>
+    <h1 id="heading">A good read, kept.</h1>
+    <p class="status" id="status" role="status" aria-live="polite">Finding your place…</p>
+    <button class="primary" id="setup" type="button" hidden>Connect your instance <span aria-hidden="true">↗</span></button>
+    <button class="secondary" id="retry" type="button" hidden>Try again</button>
+    <form hidden>
+      <label for="title">Article title</label>
+      <input id="title" name="title" maxlength="1000" autocomplete="off">
+      <label for="tags">Tags <span class="hint">separate with commas</span></label>
+      <input id="tags" name="tags" list="tag-suggestions" placeholder="Ideas, design, to revisit" autocomplete="off">
+      <datalist id="tag-suggestions"></datalist>
+      <div class="choices">
+        <label class="choice"><input type="checkbox" id="starred">Favorite</label>
+        <label class="choice"><input type="checkbox" id="archive">Already read</label>
+      </div>
+      <label class="choice capture" id="capture-row"><input type="checkbox" id="capture"><span>Save content from this page<small>For articles you are signed in to read. Only the article text is sent, never your cookies.</small></span></label>
+      <button class="primary" id="save" type="submit">Save article</button>
+    </form>
+    <div class="article-actions">
+      <button class="secondary" id="reader" type="button" hidden>Open reader <span aria-hidden="true">↗</span></button>
+      <button class="text-button danger" id="remove" type="button" hidden>Remove</button>
+    </div>
+    <div id="removal" class="removal" hidden><p>Remove this article and its notes from your library?</p><div class="article-actions"><button id="keep" class="secondary" type="button">Keep article</button><button id="confirm-remove" class="text-button danger" type="button">Remove permanently</button></div></div>
+    <p class="recent" id="recent"></p>
+  </main>
+  <footer><span>Less noise. More perspective.</span><button class="text-button" id="library" type="button">Library ↗</button></footer>
+</body>
+</html>

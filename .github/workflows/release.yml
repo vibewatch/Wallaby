@@ -13,6 +13,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  browser-extensions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox
+      - name: Install Firefox WebDriver
+        run: |
+          curl -fsSL --retry 3 https://github.com/mozilla/geckodriver/releases/download/v0.37.1/geckodriver-v0.37.1-linux64.tar.gz -o "$RUNNER_TEMP/geckodriver.tar.gz"
+          echo "e815130ea95983e162ae91843b48d3a3ce991735635fce83a647afde21e09f7e  $RUNNER_TEMP/geckodriver.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/geckodriver.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: npm run test:extension && npm run test:extension:firefox
+        env:
+          WALLABY_E2E_PORT: 3330
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wallaby-browser-extensions
+          path: .tmp/extensions/wallaby-*.zip
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-extension-test-results
+          path: test-results
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

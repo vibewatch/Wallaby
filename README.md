@@ -10,6 +10,7 @@ The repository is evidence-driven about its wallabag compatibility surface. The 
 - Authenticator-app or SMTP email two-factor authentication, single-use recovery codes, and revocable 15-day trusted devices
 - Self-service password reset by single-use, 30-minute email link when instance email is configured; a reset signs out every device and keeps two-factor authentication on
 - Save a URL from the library, a bookmarklet, or the installed app's share sheet; securely fetch it, extract a readable copy, and deduplicate per user (saving a known URL merges its new tags)
+- Chrome and Firefox browser companion with quick saving, tags, favorite/read state, and opt-in signed-in article capture; [build and installation](extensions/README.md)
 - Unread, archive, starred, all, annotated, tag, and untagged library views, sortable by saved date, title, reading time, or publication date (kept across paging, search, and export)
 - Ranked full-text search with prefix and quoted-phrase matching, highlighted result snippets, and a portable substring fallback
 - A tag index that groups every tag by initial or orders it by use, with a filter; the sidebar lists the most-used tags

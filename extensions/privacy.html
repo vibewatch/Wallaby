@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wallaby extension privacy</title><link rel="stylesheet" href="styles.css"></head>
+<body><main class="policy">
+  <a href="options.html">← Connection settings</a>
+  <h1>Private by intention.</h1>
+  <p>The Wallaby browser extension sends data only to the Wallaby instance you configure. There is no analytics, advertising, remote code, or third-party telemetry.</p>
+  <h2>What leaves your browser</h2>
+  <p>When you open the popup on a web page, its URL is sent to your instance to check whether it is already saved. Saving sends the selected URL and any title, tags, favorite, or read status you choose. Right-click saving sends only the selected page or link address.</p>
+  <p>If you explicitly choose “Save content from this page,” Mozilla Readability extracts the article from a copy of the page DOM. Its HTML is sent to your instance. This may include private information visible on that page, such as subscription content. Use it only for content you have permission to save. Page cookies, passwords, form values, and browser history are not collected by the extension.</p>
+  <h2>Token and storage</h2>
+  <p>Your personal API token is sent as a bearer credential only to your configured instance. Requests omit browser cookies and reject redirects. The token and instance address are stored locally in the browser profile, not in browser sync. This storage is not an encrypted password vault: protect access to your browser profile. Disconnect removes the stored token and the instance permission; revoke the token in Wallaby Settings to invalidate it on the server.</p>
+  <p>A recent context-menu save result is stored locally to report errors and success. It is replaced by the next result and removed on disconnect. Saved articles remain in your Wallaby instance until you remove them there or with the extension.</p>
+  <h2>Permissions</h2>
+  <p><strong>activeTab and scripting:</strong> read the current page address and title when you open the extension; extract article content only when you select that option and save. There are no automatically injected scripts.</p>
+  <p><strong>storage:</strong> remember your connection locally. <strong>contextMenus:</strong> offer right-click saving for pages and links. <strong>Optional host access:</strong> communicate with your chosen instance. Browser host grants apply to all ports on that hostname, but the extension makes authenticated requests only to the exact address you configured. HTTPS is required except on loopback addresses used for development.</p>
+  <h2>Your server, your policy</h2>
+  <p>Your instance operator controls server retention, backups, and access. The extension cannot delete server logs or backups. Chrome Web Store and Firefox Add-ons, if used for installation, have their own platform policies.</p>
+  <h2>Source and credits</h2>
+  <p>The extension is part of <a href="https://github.com/huangyingting/Wallaby" target="_blank" rel="noreferrer">Wallaby</a>. Its browser-specific manifests and save/edit flow reference the MIT-licensed <a href="https://github.com/wallabag/wallabagger" target="_blank" rel="noreferrer">Wallabagger</a> project. Bundled third-party notices and license terms are in THIRD-PARTY-NOTICES.txt, readability-LICENSE.md, apache-2.0.txt, and font-licenses.txt.</p>
+</main></body></html>

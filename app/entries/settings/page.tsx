@@ -129,6 +129,7 @@ export default async function SettingsPage() {
         <div className="settings-label"><Braces size={18} /><div><h2>API access</h2><p>Bearer tokens for clients using the wallabag-shaped API.</p></div></div>
         <div className="settings-content">
           <p className="rule-help">Need OAuth2 authorization-code or refresh-token credentials? <Link href="/entries/developer">Manage developer clients</Link>.</p>
+          <p className="rule-help">Using Chrome or Firefox? <a href="https://github.com/huangyingting/Wallaby/tree/main/extensions" target="_blank" rel="noreferrer">Install the Wallaby browser companion</a> and create a dedicated token below to connect it.</p>
           <CreateTokenForm />
           <div className="token-list">
             {tokens.map((token) => <div key={token.id}><KeyRound size={15} /><span><strong>{token.name}</strong><small>Created {token.createdAt.toLocaleDateString()} · {token.lastUsedAt ? `last used ${token.lastUsedAt.toLocaleDateString()}` : "never used"}</small></span><form action={revokeApiToken.bind(null, token.id)}><button aria-label={`Revoke ${token.name}`}><Trash2 size={15} /></button></form></div>)}
