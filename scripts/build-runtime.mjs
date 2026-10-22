@@ -12,7 +12,7 @@ const compiled = join(root, ".next/operators");
 const manifest = JSON.parse(await readFile("package.json", "utf8"));
 const entryPoints = new Set(["scripts/postgresql-smoke.ts", "scripts/runtime-smoke.ts"]);
 for (const [name, command] of Object.entries(manifest.scripts)) {
-  if (name.startsWith("test:")) continue;
+  if (name.startsWith("test:") || name.startsWith("extension:")) continue;
   const match = /^tsx ((?:scripts|prisma)\/\S+\.ts)(.*)$/.exec(command);
   if (!match) continue;
   entryPoints.add(match[1]);

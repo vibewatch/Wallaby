@@ -96,13 +96,14 @@ test("Firefox event page connects, captures content, updates, revokes, and disco
       script: "const done=arguments[arguments.length-1]; browser.tabs.create({url:arguments[0],active:false}).then(done);", args: [articleAddress],
     }));
     await expect.poll(() => request("POST", `/session/${sessionId}/execute/async`, {
-      script: "const done=arguments[arguments.length-1]; browser.tabs.get(arguments[0]).then(tab=>done(tab.status));", args: [tab.id],
-    })).toBe("complete");
+      script: "const done=arguments[arguments.length-1]; browser.tabs.get(arguments[0]).then(tab=>done({url:tab.url,status:tab.status}));", args: [tab.id],
+    })).toEqual({ url: articleAddress, status: "complete" });
     expect(await send({ type: "lookup", url: articleAddress })).toMatchObject({ ok: true, result: { entry: null } });
-    expect(await send({
+    const captured = await send({
       type: "save", url: articleAddress, captureTabId: tab.id,
       changes: { title: "Firefox reading", tags: ["Browser"], archive: false, starred: true },
-    })).toMatchObject({ ok: true, result: { entry: { title: "Firefox reading", tags: ["Browser"], incomplete: false } } });
+    });
+    expect(captured, JSON.stringify(captured)).toMatchObject({ ok: true, result: { entry: { title: "Firefox reading", tags: ["Browser"], incomplete: false } } });
     const saved = await prisma.entry.findFirstOrThrow({ where: { userId: user.id, givenUrl: articleAddress } });
     expect(saved.content).toContain("A meaningful reading habit");
     expect(await send({ type: "update", id: saved.id, changes: { title: "Edited in Firefox", tags: [], archive: true, starred: false } }))
