@@ -35,6 +35,8 @@ test("a real empty account can start a library, resume reading, and navigate cle
     await expect(page.locator(".entry-card")).toHaveCount(0);
     await expect(page.locator('.sidebar-nav a[aria-current="page"]')).toHaveAttribute("aria-label", "Unread");
     await noOverflow();
+    await expect(page.locator(".library-header")).toHaveCSS("margin-bottom", "20px");
+    await expect(page.locator(".add-entry > summary")).toHaveCSS("min-height", "44px");
     await page.screenshot({ path: testInfo.outputPath("library-empty.png"), fullPage: true });
     await page.locator(".empty-actions").getByRole("link", { name: "Save your first article" }).click();
     await expect(page.getByLabel("Article URL")).toBeVisible();
@@ -57,6 +59,9 @@ test("a real empty account can start a library, resume reading, and navigate cle
     await page.getByLabel("Select A real idea, saved for later").uncheck();
     await expect(page.locator(".bulk-toolbar")).toBeHidden();
     await noOverflow();
+    await expect(page.locator(".entry-list")).toHaveCSS("gap", "10px");
+    await expect(page.locator(".entry-card-body")).toHaveCSS("padding-left", "16px");
+    await expect(page.locator(".entry-card-body")).toHaveCSS("padding-top", "14px");
     await page.screenshot({ path: testInfo.outputPath("library-populated.png"), fullPage: true });
 
     await page.goto("/entries?view=starred");
@@ -70,6 +75,8 @@ test("a real empty account can start a library, resume reading, and navigate cle
 
     await page.goto("/entries/settings");
     await noOverflow();
+    const sectionPadding = await page.locator(".settings-section").first().evaluate((element) => parseFloat(getComputedStyle(element).paddingTop));
+    expect(sectionPadding).toBeLessThanOrEqual(18);
     await page.getByRole("combobox", { name: "Colour theme" }).selectOption("dark");
     await page.getByRole("button", { name: "Save preferences" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -80,7 +87,20 @@ test("a real empty account can start a library, resume reading, and navigate cle
     await page.getByRole("link", { name: "Continue reading A real idea, saved for later" }).click();
     await expect(page.locator(".article-header h1")).toHaveText("A real idea, saved for later");
     await noOverflow();
+    const readerPadding = await page.locator(".reader-article").evaluate((element) => parseFloat(getComputedStyle(element).paddingTop));
+    expect(readerPadding).toBeLessThanOrEqual(32);
     await page.screenshot({ path: testInfo.outputPath("reader.png"), fullPage: true });
+
+    for (const width of [360, 820, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/entries");
+      await expect(page.locator(".library-page")).toHaveCSS("padding-top", width <= 720 ? "20px" : "28px");
+      await expect(page.locator(".entry-title")).toBeVisible();
+      await noOverflow();
+      await page.goto("/entries/settings");
+      await expect(page.getByRole("button", { name: "Save preferences" })).toBeVisible();
+      await noOverflow();
+    }
   } finally {
     await prisma.user.delete({ where: { id: reader.id } });
     await prisma.$disconnect();
