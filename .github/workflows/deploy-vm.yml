@@ -35,7 +35,7 @@ jobs:
       packages: write
     outputs:
       commit: ${{ steps.source.outputs.commit }}
-      image: ghcr.io/huangyingting/wallaby@${{ steps.build.outputs.digest }}
+      image: ghcr.io/vibewatch/wallaby@${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,7 +62,7 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/huangyingting/wallaby:${{ steps.source.outputs.commit }}
+          tags: ghcr.io/vibewatch/wallaby:${{ steps.source.outputs.commit }}
           build-args: |
             DEPLOYMENT_VERSION=${{ steps.source.outputs.commit }}
             DATABASE_PROVIDER=postgresql

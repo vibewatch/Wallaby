@@ -4,7 +4,7 @@ export function extensionManifest(target: "chrome" | "firefox") {
     name: "Wallaby",
     version: "0.1.0",
     description: "A personal reading space. Save articles, collect ideas, and return to what matters.",
-    homepage_url: "https://github.com/huangyingting/Wallaby",
+    homepage_url: "https://github.com/vibewatch/Wallaby",
     icons: { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
     action: {
       default_title: "Save to Wallaby",

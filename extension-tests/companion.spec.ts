@@ -112,7 +112,7 @@ test("connect, capture, deduplicate, edit, read, delete, revoke and disconnect",
     await reader.goto(`${e2eBaseUrl}/entries/${saved.id}`);
     await expect(reader.getByRole("heading", { name: "A better reading habit" })).toBeVisible();
     await reader.goto(`${e2eBaseUrl}/entries/help`);
-    await expect(reader.getByRole("link", { name: "Install the extension" })).toHaveAttribute("href", "https://github.com/huangyingting/Wallaby/tree/main/extensions");
+    await expect(reader.getByRole("link", { name: "Install the extension" })).toHaveAttribute("href", "https://github.com/vibewatch/Wallaby/tree/main/extensions");
     await reader.goto(`${e2eBaseUrl}/entries/settings`);
     await expect(reader.getByRole("link", { name: "Install the Wallaby browser companion" })).toBeVisible();
     await reader.close();

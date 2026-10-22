@@ -6,7 +6,7 @@ umask 077
 image=$1
 commit=$2
 payload=$3
-[[ "$image" =~ ^ghcr\.io/huangyingting/wallaby@sha256:[a-f0-9]{64}$ ]] || { echo "Invalid immutable Wallaby image" >&2; exit 1; }
+[[ "$image" =~ ^ghcr\.io/vibewatch/wallaby@sha256:[a-f0-9]{64}$ ]] || { echo "Invalid immutable Wallaby image" >&2; exit 1; }
 [[ "$commit" =~ ^[a-f0-9]{40}$ && "$payload" == /tmp/wallaby-deploy.* && -d "$payload" && ! -L "$payload" ]] || { echo "Invalid deployment payload" >&2; exit 1; }
 mountpoint -q /data || { echo "The persistent /data volume is not mounted" >&2; exit 1; }
 test -f /etc/caddy/Caddyfile

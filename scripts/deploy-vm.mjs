@@ -10,7 +10,7 @@ function required(name) {
 
 const commit = required("DEPLOY_COMMIT");
 const image = required("DEPLOY_IMAGE");
-if (!/^[a-f0-9]{40}$/.test(commit) || !/^ghcr\.io\/huangyingting\/wallaby@sha256:[a-f0-9]{64}$/.test(image)) {
+if (!/^[a-f0-9]{40}$/.test(commit) || !/^ghcr\.io\/vibewatch\/wallaby@sha256:[a-f0-9]{64}$/.test(image)) {
   throw new Error("Deployment requires a full commit SHA and the Wallaby GHCR image digest");
 }
 const files = {

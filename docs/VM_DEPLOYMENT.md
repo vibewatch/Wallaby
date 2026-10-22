@@ -77,12 +77,16 @@ GitHub uses immutable repository IDs in this repository's OIDC subject. Obtain
 the actual prefix rather than constructing a lowercase `repo:owner/name` subject:
 
 ```bash
-gh api repos/huangyingting/Wallaby/actions/oidc/customization/sub
+gh api repos/vibewatch/Wallaby/actions/oidc/customization/sub
 ```
 
 The Azure federation subject is the returned `sub_claim_prefix` followed by
 `:environment:production`, with issuer `https://token.actions.githubusercontent.com`
 and audience `api://AzureADTokenExchange`.
+Repository transfers change the owner name and owner ID in this prefix. Update
+the existing managed identity's production federation to the new exact subject;
+do not broaden it to other repositories or environments. The production image
+is published under `ghcr.io/vibewatch/wallaby`.
 
 Set these **production environment variables**:
 
